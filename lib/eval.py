@@ -77,6 +77,8 @@ def calculate_ppl(
         # Prepare inputs and move to device
         inputs = testenc[:,(i * model.seqlen):(j * model.seqlen)].to(device)
         inputs = inputs.reshape(j-i, model.seqlen) 
+        if 'gemma' in model.config._name_or_path:  
+            inputs[:, 0] = model.config.bos_token_id  
         # Forward pass through the model
         lm_logits = model(inputs).logits
 

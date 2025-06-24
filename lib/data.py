@@ -71,7 +71,7 @@ def _process_and_tokenize(raw_dataset, dataset_name, tokenizer, nsamples, seqlen
         end_index = start_index + seqlen
         
         inp = token_source[:, start_index:end_index]
-        if 'gemma' in tokenizer.__class__.__name__.lower() or 'llama' in tokenizer.__class__.__name__.lower():
+        if 'gemma' in tokenizer.__class__.__name__.lower():
             inp[:, 0] = tokenizer.bos_token_id
         
         processed_samples.append({
@@ -90,7 +90,7 @@ def get_dataset(
     seqlen: int,
     data_type: str = "train",
     cache_dir: str = "dataset",
-    save_to_cache: bool = True
+    save_to_cache: bool = False
 ) -> Dataset:
     """
     Creates or loads a tokenized dataset from cache.
@@ -176,17 +176,24 @@ def get_loaders(
     trainloader = []
     for sample in train_dataset:
         inp = torch.tensor(sample['input_ids']).unsqueeze(0)  # (seqlen,) -> (1, seqlen)
+        if 'gemma' in tokenizer.__class__.__name__.lower():
+            inp[:, 0] = tokenizer.bos_token_id
         tar = inp.clone()
         tar[:, :-1] = -100
         trainloader.append((inp, tar))
 
     # 3. Create the test data object in the old format (using wikitext2 as default)
-    test_raw_data = _get_raw_dataset("wikitext2", "test")
-    test_text = "\n\n".join(test_raw_data["text"])
-    testenc = tokenizer(test_text, return_tensors='pt')
-    testenc = TokenizerWrapper(testenc.input_ids)
+    if name.lower() == "c4":
+        valdata = _get_raw_dataset("c4", "validation")
+        valenc = tokenizer(" ".join(valdata[:1100]["text"]), return_tensors='pt')
+        valenc = valenc.input_ids[:,:(256*seqlen)]
+        valenc = TokenizerWrapper(valenc)
+    elif name.lower() == "wikitext2":
+        valdata = _get_raw_dataset("wikitext2", "validation")
+        valenc = tokenizer("\n\n".join(valdata["text"]), return_tensors='pt')
+        valenc = TokenizerWrapper(valenc.input_ids)
 
-    return trainloader, testenc
+    return trainloader, valenc
 
 # =====================================================================================
 # Section 3: Utility Classes for Local Solvers (e.g., SAFE)

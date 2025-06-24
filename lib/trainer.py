@@ -508,16 +508,16 @@ class ADMMTrainer(Trainer):
                 metrics[f"{metric_key_prefix}_perplexity"] = float("inf")
 
         # # 3. Calculate W-Z Distance (only on the main process)
-        # if self.is_world_process_zero():
-        #     wz_distance_metrics = self.calculate_wz_distance(
-        #         model=self.model,
-        #         sparsity_ratio=self.args.sparsity_ratio,
-        #         prune_n=self.args.prune_n,
-        #         prune_m=self.args.prune_m,
-        #         device=self.args.device,
-        #         metric_key_prefix=metric_key_prefix
-        #     )
-        #     metrics.update(wz_distance_metrics)
+        if self.is_world_process_zero():
+            primal_residual = self.calculate_primal_residual(
+                model=self.model,
+                sparsity_ratio=self.args.sparsity_ratio,
+                prune_n=self.args.prune_n,
+                prune_m=self.args.prune_m,
+                device=self.args.device,
+                metric_key_prefix=metric_key_prefix
+            )
+            metrics.update(primal_residual)
 
         metrics = denumpify_detensorize(metrics)
         if hasattr(self, "jit_compilation_time"):
@@ -526,6 +526,75 @@ class ADMMTrainer(Trainer):
         return EvalLoopOutput(predictions=None, label_ids=None, metrics=metrics, num_samples=observed_num_examples)
 
     # --- End Evaluation Methods ---
+    def calculate_primal_residual(
+        self,
+        model: nn.Module,
+        sparsity_ratio: float,
+        prune_n: int,
+        prune_m: int,
+        device: torch.device,
+        metric_key_prefix: str = "eval",
+        eps: float = 1e-12,          # small constant to prevent div-by-zero
+    ) -> Dict[str, float]:
+        """
+        Compute both
+            • primal residual ‖w - z‖₂
+            • relative residual ‖w - z‖₂ / ‖w‖₂
+        for all nn.Linear layers except lm_head.
+
+        Returns
+        -------
+        dict
+            {
+            "<prefix>_primal_residual"  : float,
+            "<prefix>_relative_residual": float
+            }
+        """
+        groups = self.optimizer.param_groups
+        for group in groups:
+            if group.get('admm', False):
+                weight = group['params']
+                splits = group['splits']
+                with torch.no_grad():
+                    primal_residual = torch.sqrt(torch.sum(torch.stack([torch.norm(w.detach() - z.detach())**2 for w,z in zip(weight, splits)])))
+                    relative_residual = primal_residual / (torch.sqrt(torch.sum(torch.stack([torch.norm(w.detach())**2 for w in weight]))) + eps)
+        return {
+            f"{metric_key_prefix}_primal_residual": primal_residual.item(),
+            f"{metric_key_prefix}_relative_residual": relative_residual.item(),
+        }
+        # if not hasattr(model, 'optimizer') or model.optimizer is None:
+        # w - proj(w)
+        # wz_sq_sum   = torch.tensor(0.0, device=device)   # Σ‖w−z‖²
+        # w_sq_sum    = torch.tensor(0.0, device=device)   # Σ‖w‖²
+
+        # unwrapped = unwrap_model(model)
+        # layers    = find_layers(unwrapped, layers=[nn.Linear])
+
+        # for name, layer in layers.items():
+        #     if "lm_head" in name:
+        #         continue
+        #     w  = layer.weight.detach()
+        #     z  = projection(
+        #             w, sparsity=sparsity_ratio,
+        #             prune_n=prune_n, prune_m=prune_m
+        #         )[0].detach()
+
+        #     diff        = w - z
+        #     wz_sq_sum  += torch.sum(diff * diff)
+        #     w_sq_sum   += torch.sum(w * w)
+
+        # primal_residual   = torch.sqrt(wz_sq_sum).item()
+        # relative_residual = (torch.sqrt(wz_sq_sum) / (torch.sqrt(w_sq_sum) + eps)).item()
+
+        # logger.info(f"[metric] Σ‖w-z‖² = {wz_sq_sum.item():.4e}")
+        # logger.info(f"[metric] primal residual   = {primal_residual:.4e}")
+        # logger.info(f"[metric] relative residual = {relative_residual:.4e}")
+
+        # return {
+        #     f"{metric_key_prefix}_primal_residual"  : primal_residual,
+        #     f"{metric_key_prefix}_relative_residual": relative_residual,
+        # }
+    
     # --- Training Methods ---
 
     def _compute_rem_loss_and_logits(self, model, inputs, return_outputs=False):
