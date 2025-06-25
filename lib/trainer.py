@@ -739,10 +739,7 @@ class ADMMTrainer(Trainer):
 
         # Return the primary loss scaled by accumulation steps (if not using deepspeed)
         detached_loss = loss.detach()  # Detach the loss for logging and return
-        if self.deepspeed:
-             return detached_loss # DeepSpeed handles scaling
-        else:
-             return detached_loss / self.args.gradient_accumulation_steps
+        return detached_loss
     
     ## TODO: implement multi-gpu support!
     def _inner_training_loop(

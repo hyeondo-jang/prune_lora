@@ -33,7 +33,8 @@ def projection(
     sparsity: float,
     prune_n: int =0,
     prune_m: int = 0,
-    importance_matrix: list[torch.Tensor] = None
+    importance_matrix: list[torch.Tensor] = None,
+    comparison_group: str = 'layer'
 ) -> list[torch.Tensor]:
     """
     Args:
@@ -42,6 +43,7 @@ def projection(
         prune_n (int): n for n:m semi-structured sparsity
         prune_m (int): m for n:m semi-structured sparsity
         importance_matrix (list[torch.Tensor], optional): importance matrix (diag(mxm)) or vector (1xm) for each weight
+        comparison_group (str): 'layer' for layer-wise pruning metric comparison, 'column' for column-wise(input), 'row' for row-wise(output) pruning metric comparison.
     Returns:
         new_zs (list[torch.Tensor]): list of projected weights
     """
@@ -58,8 +60,29 @@ def projection(
                         tmp = z_metric[:,ii:(ii+prune_m)].float()
                         z_mask.scatter_(1,ii+torch.topk(tmp, prune_n,dim=1, largest=False)[1], True)
             else: # unstructured sparsity
-                thresh = torch.sort(z_metric.flatten().cuda())[0][int(new_z.numel()*sparsity)].cpu()
-                z_mask = (z_metric<=thresh)
+                if comparison_group == 'layer':
+                    thresh = torch.sort(z_metric.flatten().cuda())[0][int(new_z.numel()*sparsity)].cpu()                
+                    z_mask = (z_metric<=thresh)
+                elif comparison_group == 'column':
+                    num_rows_to_prune_per_col = int(new_z.shape[1]*sparsity)
+                    if num_rows_to_prune_per_col > 0:
+                        _, indices_to_prune = torch.topk(
+                            z_metric,
+                            k=num_rows_to_prune_per_col,
+                            dim=1,
+                            largest=False
+                        )
+                    z_mask.scatter_(1,indices_to_prune, True)
+                elif comparison_group == 'row':
+                    num_cols_to_prune_per_row = int(new_z.shape[0]*sparsity)
+                    if num_cols_to_prune_per_row > 0:
+                        _, indices_to_prune = torch.topk(
+                            z_metric,
+                            k=num_cols_to_prune_per_row,
+                            dim=0,
+                            largest=False
+                        )
+                    z_mask.scatter_(0,indices_to_prune, True)
             new_z[z_mask] = 0
             new_zs.append(new_z)
     else: # Standard projection, SAFE
@@ -73,8 +96,29 @@ def projection(
                         tmp = z_metric[:,ii:(ii+prune_m)].float()
                         z_mask.scatter_(1,ii+torch.topk(tmp, prune_n,dim=1, largest=False)[1], True)
             else: # unstructured sparsity
-                thresh = torch.sort(z_metric.flatten().cuda())[0][int(new_z.numel()*sparsity)].cpu()
-                z_mask = (z_metric<=thresh)
+                if comparison_group == 'layer':
+                    thresh = torch.sort(z_metric.flatten().cuda())[0][int(new_z.numel()*sparsity)].cpu()                
+                    z_mask = (z_metric<=thresh)
+                elif comparison_group == 'column':
+                    num_rows_to_prune_per_col = int(new_z.shape[1]*sparsity)
+                    if num_rows_to_prune_per_col > 0:
+                        _, indices_to_prune = torch.topk(
+                            z_metric,
+                            k=num_rows_to_prune_per_col,
+                            dim=1,
+                            largest=False
+                        )
+                    z_mask.scatter_(1,indices_to_prune, True)
+                elif comparison_group == 'row':
+                    num_cols_to_prune_per_row = int(new_z.shape[0]*sparsity)
+                    if num_cols_to_prune_per_row > 0:
+                        _, indices_to_prune = torch.topk(
+                            z_metric,
+                            k=num_cols_to_prune_per_row,
+                            dim=0,
+                            largest=False
+                        )
+                    z_mask.scatter_(0,indices_to_prune, True)
             new_z[z_mask] = 0
             new_zs.append(new_z)
     return new_zs

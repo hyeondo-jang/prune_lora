@@ -13,6 +13,7 @@ class ADMM(torch.optim.Optimizer):
         prune_n: int = 0,
         prune_m: int = 0,
         importance_matrix: list[torch.Tensor] = None,
+        comparison_group: str = 'layer',
         **kwargs
     ):
         """
@@ -32,11 +33,15 @@ class ADMM(torch.optim.Optimizer):
             prune_n (int): n for n:m structured sparsity.
             prune_m (int): m for n:m structured sparsity.
             importance_matrix (list[torch.Tensor], optional): Importance matrix used for generalized projection. Must have the same structure as param_groups with admm=True.
+            comparison_group (str): Comparison group for ADMM projection ('layer', 'column', 'row').
             **kwargs: Additional arguments for the base optimizer.
         """
         if not callable(projection_fn):
             raise TypeError("projection_fn must be a callable function.")
         self.projection= projection_fn
+        self.comparison_group = comparison_group.lower()
+        if self.comparison_group not in ['layer', 'column', 'row']:
+            raise ValueError(f"comparison_group must be one of 'layer', 'column', 'row'. Got {self.comparison_group}.")
         processed_param_groups = []
         for i, group in enumerate(param_groups):
             if group.get('admm', False):
@@ -50,7 +55,7 @@ class ADMM(torch.optim.Optimizer):
                 if importance_matrix is not None:
                     if len(importance_matrix) != len(admm_params_list):
                         raise ValueError(f"importance_matrix must have the same length as params in group {i}.")
-                group['splits'] = self.projection(admm_params_list, sparsity, prune_n, prune_m, importance_matrix)
+                group['splits'] = self.projection(admm_params_list, sparsity, prune_n, prune_m, importance_matrix,comparison_group=self.comparison_group)
 
                 if 'lmda' not in group:
                     group['lmda'] = lmda
@@ -86,7 +91,8 @@ class ADMM(torch.optim.Optimizer):
                     self.sparsity,
                     prune_n=self.prune_n,
                     prune_m=self.prune_m,
-                    importance_matrix=self.importance_matrix
+                    importance_matrix=self.importance_matrix,
+                    comparison_group=self.comparison_group
                 )
                 for w,fw in zip(weights,final_weights):
                     w.data.copy_(fw)
@@ -131,7 +137,8 @@ class ADMM(torch.optim.Optimizer):
                                 sparsity,
                                 prune_n=self.prune_n,
                                 prune_m=self.prune_m,
-                                importance_matrix=self.importance_matrix
+                                importance_matrix=self.importance_matrix,
+                                comparison_group=self.comparison_group
                             )[0]
 
                             u_new_i = duals[i].detach() + weights[i].detach() - z_new_i # U_t+1 = U_t + W_t+1 - Z_t+1
@@ -160,6 +167,7 @@ class SAFE(torch.optim.Optimizer):
                 prune_n: int = 0,
                 prune_m: int = 0,
                 importance_matrix: list[torch.Tensor] = None,
+                comparison_group: str = 'layer',
                 **kwargs):
         """
         SAFE optimizer 
@@ -179,11 +187,15 @@ class SAFE(torch.optim.Optimizer):
             prune_n (int): n for n:m structured sparsity.
             prune_m (int): m for n:m structured sparsity.
             importance_matrix (list[torch.Tensor], optional): Importance matrix used for generalized projection. Must have the same structure as param_groups with admm=True.
+            comparison_group (str): Comparison group for ADMM projection ('layer', 'column', 'row').
             **kwargs: Additional arguments for the base optimizer.
         """
         if not callable(projection_fn):
             raise TypeError("projection_fn must be a callable function.")
         self.projection= projection_fn
+        self.comparison_group = comparison_group.lower()
+        if self.comparison_group not in ['layer', 'column', 'row']:
+            raise ValueError(f"comparison_group must be one of 'layer', 'column', 'row'. Got {self.comparison_group}.")
         processed_param_groups = []
         for i, group in enumerate(param_groups):
             if group.get('admm', False):
@@ -197,7 +209,7 @@ class SAFE(torch.optim.Optimizer):
                 if importance_matrix is not None:
                     if len(importance_matrix) != len(admm_params_list):
                         raise ValueError(f"importance_matrix must have the same length as params in group {i}.")
-                group['splits'] = self.projection(admm_params_list, sparsity, prune_n, prune_m, importance_matrix)
+                group['splits'] = self.projection(admm_params_list, sparsity, prune_n, prune_m, importance_matrix, comparison_group=self.comparison_group)
 
                 if 'lmda' not in group:
                     group['lmda'] = lmda
@@ -233,7 +245,8 @@ class SAFE(torch.optim.Optimizer):
                 self.sparsity,
                 prune_n=self.prune_n,
                 prune_m=self.prune_m,
-                importance_matrix=self.importance_matrix
+                importance_matrix=self.importance_matrix,
+                comparison_group=self.comparison_group
             )
             for w,fw in zip(weights,final_weights):
                 w.data.copy_(fw)
@@ -283,7 +296,8 @@ class SAFE(torch.optim.Optimizer):
                                 sparsity,
                                 prune_n=self.prune_n,
                                 prune_m=self.prune_m,
-                                importance_matrix=self.importance_matrix
+                                importance_matrix=self.importance_matrix,
+                                comparison_group=self.comparison_group
                             )[0]
 
                             u_new_i = duals[i].detach() + weights[i].detach() - z_new_i # U_t+1 = U_t + W_t+1 - Z_t+1

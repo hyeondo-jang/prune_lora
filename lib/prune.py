@@ -186,6 +186,7 @@ def prune_wanda(
     torch.cuda.empty_cache()
     logging.info("WANDA pruning finished.")
 
+## TODO: need fix (projection, admm)
 @torch.no_grad() 
 def prune_safe(
     args,
@@ -625,12 +626,13 @@ class AdmmTrainingArguments(TrainingArguments):
     admm_lmda: float = field(default=0.001, metadata={"help": "Lambda (rho) penalty parameter for ADMM."})
     admm_initial_lmda: float = field(default=0.0, metadata={"help": "Initial lambda (rho) for ADMM for penalty scheduling. defaults to 0.0."})
     admm_lmda_schedule_mode: str = field(default='constant', metadata={"help": "Mode for lambda schedule (linear/cosine/exponential/constant)."})
-    sparsity_ratio: float = field(default=0.0, metadata={"help": "Target sparsity ratio (for reference)."})
     admm_sparsity_schedule_mode: str = field(default='constant', metadata={"help": "Mode for sparsity schedule (linear/cosine/exponential/constant)."})
     admm_interval: int = field(default=32, metadata={"help": "Interval for ADMM projection and dual updates."})
-    base_optimizer_type: str = field(default='adam', metadata={"help": "Base optimizer for ADMM primal update."})
+    admm_projection_comparison_group: str = field(default='layer', metadata={"help": "Comparison group for ADMM projection (layer/column/row)."})
     prune_n: int = field(default=0, metadata={"help": "N for N:M sparsity."})
     prune_m: int = field(default=0, metadata={"help": "M for N:M sparsity."})
+    sparsity_ratio: float = field(default=0.0, metadata={"help": "Target sparsity ratio (for reference)."})
+    base_optimizer_type: str = field(default='adam', metadata={"help": "Base optimizer for ADMM primal update."})
     blockwise_projection: bool = field(default=False, metadata={"help": "Use blockwise projection in ADMM."})
     activation_aware: bool = field(default=False, metadata={"help": "Use activation-aware projection in ADMM."})
     decouple_admm: bool = field(default=False, metadata={"help": "Decouple proximal update in ADMM (for Adam)."})
@@ -687,6 +689,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         admm_sparsity_schedule_mode=FLAGS.admm_sparsity_schedule_mode,
         admm_interval=FLAGS.admm_interval,
         base_optimizer_type=FLAGS.admm_base_optimizer,
+        admm_projection_comparison_group=FLAGS.admm_projection_comparison_group,
         prune_n=prune_n,
         prune_m=prune_m,
         loss_type=FLAGS.loss_type,

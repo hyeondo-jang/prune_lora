@@ -84,6 +84,8 @@ def main(argv):
             prune_alps(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
         elif FLAGS.prune_method == 'global_admm':
             globalprune_admm(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+        elif FLAGS.prune_method == 'dense':
+            logging.info("No pruning applied, model remains dense.")
         
     if int(os.environ.get("WORLD_SIZE", 1)) > 1:
         torch.distributed.barrier()
@@ -142,12 +144,12 @@ if __name__ == '__main__':
     flags.DEFINE_integer('nsamples', 128, 'Number of calibration samples.')
     flags.DEFINE_float('sparsity_ratio', 0.5, 'Sparsity level')
     flags.DEFINE_enum('sparsity_type', "unstructured", ["unstructured", "4:8", "2:4"], 'Type of sparsity.')
-    flags.DEFINE_enum('prune_method', "global_admm", ["magnitude", "wanda", "sparsegpt", "safe", "alps","global_admm"], 'Pruning method.')
+    flags.DEFINE_enum('prune_method', "global_admm", ["magnitude", "wanda", "sparsegpt", "safe", "alps","global_admm", 'dense'], 'Pruning method.')
     flags.DEFINE_enum('dataset', 'c4', ["c4", "wikitext2"], 'Calibration dataset.')
     
     # SAFE hyperparams
     flags.DEFINE_float('lmda', 1e-3, 'Penalty parameter for SAFE dual update.')
-    flags.DEFINE_integer('batch_size', 8, 'Batch size for SAFE.')
+    flags.DEFINE_integer('batch_size', 4, 'Batch size for SAFE.')
     flags.DEFINE_float('learning_rate', 2e-4, 'Learning rate for SAFE.')
     flags.DEFINE_integer('epochs', 30, 'Number of epochs for SAFE.')
     flags.DEFINE_integer('interval', 32, 'Dual update interval for SAFE.')
@@ -178,12 +180,13 @@ if __name__ == '__main__':
     flags.DEFINE_integer('admm_warmup_steps', 0, 'Warmup steps for ADMM learning rate scheduler.')
     flags.DEFINE_float('admm_weight_decay', 0.0, 'Weight decay for ADMM base optimizer.')
     flags.DEFINE_enum('admm_precision', 'bf16', ['fp32', 'fp16', 'bf16'], 'Precision for ADMM training (fp16/bf16 enables Trainer autocast).')
+    flags.DEFINE_enum('admm_projection_comparison_group', 'layer', ['layer','column', 'row'], 'Comparison group for ADMM projection (layer/column/row).')
     
     # ADMM Specific Config
-    flags.DEFINE_float('admm_lmda', 1e-3, 'Lambda penalty parameter for ADMM.')
+    flags.DEFINE_float('admm_lmda', 1, 'Lambda penalty parameter for ADMM.')
     flags.DEFINE_float('admm_initial_lmda',0.0, 'Initial lambda value for ADMM (if using schedule).')
-    flags.DEFINE_enum('admm_lmda_schedule_mode', 'constant', ['constant','linear','exponential','cosine'], 'Mode for lambda schedule (e.g., linear, cosine).')
-    flags.DEFINE_enum('admm_sparsity_schedule_mode', 'constant', ['constant','linear','exponential','cosine'], 'Mode for sparsity schedule (e.g., cubic, linear).')
+    flags.DEFINE_enum('admm_lmda_schedule_mode', 'constant', ['constant','linear','log','cosine'], 'Mode for lambda schedule (e.g., linear, cosine).')
+    flags.DEFINE_enum('admm_sparsity_schedule_mode', 'constant', ['constant','linear','exponential','cosine','cubic','cubic'], 'Mode for sparsity schedule (e.g., cubic, linear).')
     flags.DEFINE_integer('admm_interval', 32, 'Interval for ADMM projection and dual updates.')
     flags.DEFINE_enum('admm_base_optimizer', 'adam', ['adam', 'sgd'], 'Base optimizer for ADMM primal update.')
     flags.DEFINE_bool('admm_blockwise_projection', False, 'Use blockwise projection in ADMM.')
