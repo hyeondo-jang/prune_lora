@@ -214,7 +214,7 @@ class ADMMTrainer(Trainer):
                     projection_fn=projection,
                     lmda=self.args.admm_lmda, sparsity=self.args.sparsity_ratio, interval=self.args.admm_interval, 
                     lr=self.args.learning_rate, prune_n=self.args.prune_n, prune_m=self.args.prune_m, 
-                    base_optimizer=base_optimizer, rho = self.args.rho,
+                    base_optimizer=base_optimizer, rho = self.args.rho, comparison_group=self.args.admm_projection_comparison_group,
                     **base_optimizer_kwargs,
                 )
             else:
@@ -222,7 +222,7 @@ class ADMMTrainer(Trainer):
                     param_groups,
                     projection_fn = projection,
                     lmda=self.args.admm_lmda, sparsity=self.args.sparsity_ratio, interval=self.args.admm_interval, 
-                    lr=self.args.learning_rate, prune_n=self.args.prune_n, prune_m=self.args.prune_m, 
+                    lr=self.args.learning_rate, prune_n=self.args.prune_n, prune_m=self.args.prune_m, comparison_group=self.args.admm_projection_comparison_group,
                     base_optimizer = base_optimizer,
                     **base_optimizer_kwargs,
                 )
