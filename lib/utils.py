@@ -60,6 +60,7 @@ def projection(
                         tmp = z_metric[:,ii:(ii+prune_m)].float()
                         z_mask.scatter_(1,ii+torch.topk(tmp, prune_n,dim=1, largest=False)[1], True)
             else: # unstructured sparsity
+                z_mask = (torch.zeros_like(new_z)==1)
                 if comparison_group == 'layer':
                     thresh = torch.sort(z_metric.flatten().cuda())[0][int(new_z.numel()*sparsity)].cpu()                
                     z_mask = (z_metric<=thresh)
@@ -96,6 +97,7 @@ def projection(
                         tmp = z_metric[:,ii:(ii+prune_m)].float()
                         z_mask.scatter_(1,ii+torch.topk(tmp, prune_n,dim=1, largest=False)[1], True)
             else: # unstructured sparsity
+                z_mask = (torch.zeros_like(new_z)==1)
                 if comparison_group == 'layer':
                     thresh = torch.sort(z_metric.flatten().cuda())[0][int(new_z.numel()*sparsity)].cpu()                
                     z_mask = (z_metric<=thresh)
@@ -296,12 +298,20 @@ def prepare_calibration_input(
     if use_cache is not None:
         model.config.use_cache = False
     
-    layers = model.model.layers
-    model.model.embed_tokens = model.model.embed_tokens.to(device)
-    model.model.norm = model.model.norm.to(device)
-    if hasattr(model.model,'rotary_emb'): # Gemma does not have rotary_emb
-        model.model.rotary_emb = model.model.rotary_emb.to(device)
-        model.model.rotary_emb.inv_freq = model.model.rotary_emb.inv_freq.to(device)
+    # Use helper functions to robustly get model components
+    layers = get_model_layers(model)
+    embed_tokens = get_model_embeddings(model)
+    norm = get_model_norm(model)
+    rotary_emb = get_model_rotary_emb(model)
+
+    # Move necessary components to the specified device
+    embed_tokens.to(device)
+    if norm is not None:
+        norm.to(device)
+    if rotary_emb is not None:
+        rotary_emb.to(device)
+        if hasattr(rotary_emb, 'inv_freq'):
+            rotary_emb.inv_freq = rotary_emb.inv_freq.to(device)
     layers[0] = layers[0].to(device)
 
     dtype = next(iter(model.parameters())).dtype
@@ -311,9 +321,6 @@ def prepare_calibration_input(
         hidden_size = getattr(model.config, 'dim', None)
         if hidden_size is None:
             raise ValueError("Could not find hidden_size or dim in model config")
-    
-    if not (hasattr(model, 'model') and hasattr(model.model, 'layers')):
-        raise ValueError("Could not find model.model.layers in the model structure")
     
     inps = torch.zeros((nsamples, model.seqlen, hidden_size), dtype=dtype, device=device)
     inps.requires_grad = False
@@ -326,8 +333,10 @@ def prepare_calibration_input(
             self.module = module
         
         def forward(self, inp, **kwargs):
+            # Handle cases where the input is a tuple (e.g., in OPT models)
+            input_tensor = inp[0] if isinstance(inp, tuple) else inp
             if cache['i'] < nsamples: 
-                 inps[cache['i']] = inp.detach() 
+                 inps[cache['i']] = input_tensor.detach() 
             cache['i'] += 1
             if 'attention_mask' in kwargs:
                 cache['attention_mask'] = kwargs['attention_mask']
@@ -353,10 +362,11 @@ def prepare_calibration_input(
     
     # Offload parts from device
     layers[0] = layers[0].to('cpu')
-    model.model.embed_tokens = model.model.embed_tokens.to('cpu')
-    model.model.norm = model.model.norm.to('cpu')
-    if hasattr(model.model,'rotary_emb'):
-        model.model.rotary_emb = model.model.rotary_emb.to('cpu')
+    embed_tokens.to('cpu')
+    if norm is not None:
+        norm.to('cpu')
+    if rotary_emb is not None:
+        rotary_emb.to('cpu')
 
     # Finalize outputs
     # If fewer than nsamples were collected, slice inps
@@ -435,7 +445,7 @@ def compute_dense_outputs(dataset, model, args, device="cuda", dataset_type="tra
             if (metadata.get('model_name') == args.model and
                 metadata.get('dataset_type') == dataset_type and
                 metadata.get('source_dataset') == args.dataset and
-                metadata.get('num_samples') == (args.num_train_samples if dataset_type == "train" else args.num_eval_samples) and
+                metadata.get('num_samples') == (args.admm_num_train_samples if dataset_type == "train" else args.admm_num_eval_samples) and
                 metadata.get('seqlen') == args.seqlen):
                 print(f"Loading cached {dataset_type} dense outputs...")
                 labels = torch.load(labels_file, weights_only=False)
@@ -475,11 +485,11 @@ def compute_dense_outputs(dataset, model, args, device="cuda", dataset_type="tra
         # Concatenate results
         all_hidden_states = torch.cat(all_hidden_states, dim=0)
         # Verify shapes
-        expected_samples = args.finetune_num_train_samples if dataset_type == "train" else args.finetune_num_eval_samples
+        expected_samples = args.admm_num_train_samples if dataset_type == "train" else args.admm_num_eval_samples
         assert len(dataset['input_ids']) == expected_samples, f"Expected {expected_samples} samples, got {len(dataset['input_ids'])}"
-        assert len(dataset['input_ids'][0]) == args.finetune_seqlen, f"Expected sequence length {args.finetune_seqlen}, got {len(dataset['input_ids'][0])}"
+        assert len(dataset['input_ids'][0]) == args.seqlen, f"Expected sequence length {args.seqlen}, got {len(dataset['input_ids'][0])}"
         assert all_hidden_states.size(0) == expected_samples
-        assert all_hidden_states.size(1) == args.finetune_seqlen
+        assert all_hidden_states.size(1) == args.seqlen
         # Save results
         print(f"Saving {dataset_type} dense outputs...")
         torch.save(all_hidden_states, labels_file)
@@ -523,4 +533,3 @@ def mask_grad(model):
             W = subset[name].weight.data
             mask = (W==0)
             subset[name].weight.grad[mask]= 0
-    

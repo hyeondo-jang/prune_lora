@@ -183,10 +183,11 @@ if __name__ == '__main__':
     flags.DEFINE_enum('admm_projection_comparison_group', 'layer', ['layer','column', 'row'], 'Comparison group for ADMM projection (layer/column/row).')
     
     # ADMM Specific Config
-    flags.DEFINE_float('admm_lmda', 1, 'Lambda penalty parameter for ADMM.')
+    flags.DEFINE_float('admm_lmda', 0.1, 'Lambda penalty parameter for ADMM.')
     flags.DEFINE_float('admm_initial_lmda',0.0, 'Initial lambda value for ADMM (if using schedule).')
     flags.DEFINE_enum('admm_lmda_schedule_mode', 'constant', ['constant','linear','log','cosine'], 'Mode for lambda schedule (e.g., linear, cosine).')
     flags.DEFINE_enum('admm_sparsity_schedule_mode', 'constant', ['constant','linear','exponential','cosine','cubic','cubic'], 'Mode for sparsity schedule (e.g., cubic, linear).')
+    flags.DEFINE_float('admm_peak_sparsity_step', 1, 'Step ratio (0-1) at which peak sparsity is reached in ADMM training. e.g. 0.3 means peak sparsity is reached at step*0.3 (used only when admm_sparsity_schedule_mode is not constant)')
     flags.DEFINE_integer('admm_interval', 32, 'Interval for ADMM projection and dual updates.')
     flags.DEFINE_enum('admm_base_optimizer', 'adam', ['adam', 'sgd'], 'Base optimizer for ADMM primal update.')
     flags.DEFINE_bool('admm_blockwise_projection', False, 'Use blockwise projection in ADMM.')

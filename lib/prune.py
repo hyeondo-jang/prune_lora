@@ -632,6 +632,7 @@ class AdmmTrainingArguments(TrainingArguments):
     prune_n: int = field(default=0, metadata={"help": "N for N:M sparsity."})
     prune_m: int = field(default=0, metadata={"help": "M for N:M sparsity."})
     sparsity_ratio: float = field(default=0.0, metadata={"help": "Target sparsity ratio (for reference)."})
+    admm_peak_sparsity_step: float = field(default=1.0, metadata={"help": "Step at which peak sparsity is reached (for sparsity scheduling)."})
     base_optimizer_type: str = field(default='adam', metadata={"help": "Base optimizer for ADMM primal update."})
     blockwise_projection: bool = field(default=False, metadata={"help": "Use blockwise projection in ADMM."})
     activation_aware: bool = field(default=False, metadata={"help": "Use activation-aware projection in ADMM."})
@@ -644,7 +645,7 @@ class AdmmTrainingArguments(TrainingArguments):
 # --- globalprune_admm function ---
 def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
     """
-    Performs ADMM training with REM loss.
+    Performs ADMM training globally.
     """
     if FLAGS.admm_save_path:
         model_name_part = FLAGS.model.split('/')[-1]
@@ -653,7 +654,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         admm_output_dir.mkdir(parents=True, exist_ok=True)
         admm_output_dir_str = str(admm_output_dir)
     else:
-        admm_output_dir_str = f"/tmp/admm_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        admm_output_dir_str = f"./admm_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     admm_training_args = AdmmTrainingArguments(
         output_dir=admm_output_dir_str,
@@ -686,6 +687,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         admm_initial_lmda=FLAGS.admm_initial_lmda,
         admm_lmda_schedule_mode=FLAGS.admm_lmda_schedule_mode,
         sparsity_ratio=FLAGS.sparsity_ratio,
+        admm_peak_sparsity_step=FLAGS.admm_peak_sparsity_step,
         admm_sparsity_schedule_mode=FLAGS.admm_sparsity_schedule_mode,
         admm_interval=FLAGS.admm_interval,
         base_optimizer_type=FLAGS.admm_base_optimizer,
@@ -737,46 +739,41 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         save_to_cache=FLAGS.admm_save_inputs
     )
 
-    # --- FIX 1: Distributed REM Label Computation ---
+    # --- On-the-fly REM Label Computation for Distributed Training ---
     if FLAGS.loss_type == "rem":
-        output_dir = Path(admm_training_args.output_dir)
-        train_labels_path = output_dir / "cached_train_rem_labels.pt"
-        valid_labels_path = output_dir / "cached_valid_rem_labels.pt"
+        # Tensors to hold the labels, initialized to None on all processes
+        objects_to_broadcast = [None, None]
 
-        # 메인 프로세스(rank 0)만 레이블을 계산하고 저장합니다.
+        # Rank 0 computes the labels for the entire dataset
         if admm_training_args.local_rank == 0:
             logging.info("Rank 0: Computing dense model outputs for REM loss...")
             torch.cuda.empty_cache()
 
-            # compute_dense_outputs는 모델을 device로 옮겨 계산하므로 device 인자 전달
-            train_labels_tensor = compute_dense_outputs(train_inputs, model, FLAGS, device=device, dataset_type="train")
-            valid_labels_tensor = compute_dense_outputs(valid_inputs, model, FLAGS, device=device, dataset_type="valid")
+            # Compute labels and move them to CPU for broadcasting
+            train_labels_tensor = compute_dense_outputs(train_inputs, model, FLAGS, device=device, dataset_type="train").to("cpu")
+            valid_labels_tensor = compute_dense_outputs(valid_inputs, model, FLAGS, device=device, dataset_type="valid").to("cpu")
             
-            if FLAGS.admm_precision == 'bf16':
-                train_labels_tensor = train_labels_tensor.to(torch.bfloat16)
-                valid_labels_tensor = valid_labels_tensor.to(torch.bfloat16)
-            
-            logging.info(f"Rank 0: Saving REM labels to {output_dir}")
-            torch.save(train_labels_tensor, train_labels_path)
-            torch.save(valid_labels_tensor, valid_labels_path)
+            objects_to_broadcast = [train_labels_tensor, valid_labels_tensor]
+            logging.info("Rank 0: Finished computing REM labels. Broadcasting to other processes...")
 
-        # 다른 모든 프로세스는 파일이 저장될 때까지 여기서 대기합니다.
+        # Synchronize all processes and broadcast the computed labels from rank 0
         if admm_training_args.world_size > 1:
-            torch.distributed.barrier()
+            torch.distributed.barrier()  # Ensure rank 0 is done before others proceed
+            torch.distributed.broadcast_object_list(objects_to_broadcast, src=0)
 
-        # 모든 프로세스가 저장된 파일을 로드합니다.
-        logging.info(f"Rank {admm_training_args.local_rank}: Loading REM labels from cache.")
-        train_labels_tensor = torch.load(train_labels_path, map_location="cpu")
-        valid_labels_tensor = torch.load(valid_labels_path, map_location="cpu")
+        # Unpack the broadcasted labels on all processes
+        train_labels_tensor, valid_labels_tensor = objects_to_broadcast
 
-        train_labels_dataset = Dataset.from_dict({'rem_labels': train_labels_tensor.numpy()})
-        valid_labels_dataset = Dataset.from_dict({'rem_labels': valid_labels_tensor.numpy()})
+        # Add the computed labels to the datasets
+        if train_labels_tensor is not None and valid_labels_tensor is not None:
+            train_labels_dataset = Dataset.from_dict({'rem_labels': train_labels_tensor.numpy()})
+            valid_labels_dataset = Dataset.from_dict({'rem_labels': valid_labels_tensor.numpy()})
 
-        train_inputs = concatenate_datasets([train_inputs, train_labels_dataset], axis=1)
-        valid_inputs = concatenate_datasets([valid_inputs, valid_labels_dataset], axis=1)
-        
-        if admm_training_args.local_rank == 0:
-            logging.info("REM labels loaded and added to all processes.")
+            train_inputs = concatenate_datasets([train_inputs, train_labels_dataset], axis=1)
+            valid_inputs = concatenate_datasets([valid_inputs, valid_labels_dataset], axis=1)
+            
+            if admm_training_args.local_rank == 0:
+                logging.info("REM labels computed and added to datasets on all processes.")
     
     if admm_training_args.local_rank == 0:
         logging.info(f"ADMM Datasets prepared: Train size {len(train_inputs)}, Valid size {len(valid_inputs)}")

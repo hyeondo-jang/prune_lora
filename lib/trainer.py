@@ -272,7 +272,7 @@ class ADMMTrainer(Trainer):
                 initial_sparsity= 0.0,
                 final_sparsity=self.args.sparsity_ratio,
                 start_step=0,
-                final_step=num_training_steps,
+                final_step=num_training_steps * self.args.admm_peak_sparsity_step,
                 mode=self.args.admm_sparsity_schedule_mode
             )
         return self.lr_scheduler
@@ -613,7 +613,7 @@ class ADMMTrainer(Trainer):
 
         outputs = model(**inputs, output_hidden_states=True)
         last_hidden_state = outputs.hidden_states[-1]
-        logits = outputs.logits
+        # logits = outputs.logits
 
         target_labels_rem = target_labels_rem.to(last_hidden_state.device, dtype=last_hidden_state.dtype)
         
