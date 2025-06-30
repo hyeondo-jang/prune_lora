@@ -62,11 +62,8 @@ def main(argv):
     device = torch.device(f"cuda:{local_rank}")
     torch.cuda.set_device(device)
 
-    if "30b" in FLAGS.model or "65b" in FLAGS.model:
-        # For very large models with device_map, this logic might need careful handling.
-        # The Trainer will handle device placement, so we can often rely on its logic.
-        # For now, we assume the primary device is what matters for initial setup.
-        device = model.hf_device_map["lm_head"]
+    if not (FLAGS.prune_method == 'global_admm'):
+            model = model.to(device)
     
     logging.info(f"Process {local_rank} uses device {device}")
     if FLAGS.sparsity_ratio != 0:

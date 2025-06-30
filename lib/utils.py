@@ -361,12 +361,12 @@ def prepare_calibration_input(
     layers[0] = original_first_layer # Restore original layer
     
     # Offload parts from device
-    layers[0] = layers[0].to('cpu')
-    embed_tokens.to('cpu')
-    if norm is not None:
-        norm.to('cpu')
-    if rotary_emb is not None:
-        rotary_emb.to('cpu')
+    # layers[0] = layers[0].to('cpu')
+    # embed_tokens.to('cpu')
+    # if norm is not None:
+    #     norm.to('cpu')
+    # if rotary_emb is not None:
+    #     rotary_emb.to('cpu')
 
     # Finalize outputs
     # If fewer than nsamples were collected, slice inps

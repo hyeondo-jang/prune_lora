@@ -24,6 +24,10 @@ import torch.nn.functional as F
 # --- Necessary Imports ---
 from transformers import TrainingArguments
 try:
+    from transformers.models.opt.modeling_opt import OPTDecoderLayer
+except ImportError:
+    OPTDecoderLayer = None # Fallback if OPT is not available
+try:
     import wandb
     has_wandb = True
 except ImportError:
@@ -52,7 +56,8 @@ def prune_magnitude(
         prune_m (int): M for N:M structured sparsity (0 for unstructured).
     """
     logging.info("Starting magnitude pruning...")
-    layers = model.model.layers 
+    layers = get_model_layers(model)
+ 
     # Pruning based on magnitude
     for i in range(len(layers)):
         layer = layers[i].to(device)
@@ -113,7 +118,7 @@ def prune_wanda(
     with torch.no_grad():
         inps, outs_placeholder, attention_mask, position_ids = prepare_calibration_input(model, dataloader, device, nsamples=args.nsamples)
 
-    layers = model.model.layers
+    layers = get_model_layers(model)
     current_layer_outputs = torch.zeros_like(inps) 
 
     for i in range(len(layers)):
@@ -140,7 +145,10 @@ def prune_wanda(
         for j in range(args.nsamples):
             with torch.no_grad():
                 current_input_sample = inps[j].unsqueeze(0).to(device)
-                temp_dense_outputs[j] = layer(current_input_sample, attention_mask=attention_mask, position_ids=position_ids)[0].to('cpu')
+                if OPTDecoderLayer and isinstance(layer, OPTDecoderLayer):
+                    temp_dense_outputs[j] = layer(current_input_sample, attention_mask=attention_mask)[0].to('cpu')
+                else:
+                    temp_dense_outputs[j] = layer(current_input_sample, attention_mask=attention_mask, position_ids=position_ids)[0].to('cpu')
         
         for h in handles: # Remove hooks
             h.remove()
@@ -174,7 +182,10 @@ def prune_wanda(
         with torch.no_grad():
             for j in range(args.nsamples):
                 current_input_sample = inps[j].unsqueeze(0).to(device)
-                current_layer_outputs[j] = layer(current_input_sample, attention_mask=attention_mask, position_ids=position_ids)[0].to('cpu')
+                if OPTDecoderLayer and isinstance(layer, OPTDecoderLayer):
+                    current_layer_outputs[j] = layer(current_input_sample, attention_mask=attention_mask)[0].to('cpu')
+                else:
+                    current_layer_outputs[j] = layer(current_input_sample, attention_mask=attention_mask, position_ids=position_ids)[0].to('cpu')
         
         inps, current_layer_outputs = current_layer_outputs, inps #
         
@@ -218,7 +229,8 @@ def prune_safe(
     with torch.no_grad():
         inps, _, attention_mask, position_ids = prepare_calibration_input(model, dataloader, device, nsamples=args.nsamples)
 
-    layers = model.model.layers
+    layers = get_model_layers(model)
+
     current_layer_outputs = torch.zeros_like(inps) 
     logging.info('SAFE calibration data prepared.')
 
@@ -256,7 +268,10 @@ def prune_safe(
         with torch.no_grad():
             for j in range(args.nsamples):
                 sample_input = current_inps[j].unsqueeze(0) 
-                dense_layer_targets[j] = layer(sample_input, attention_mask=attention_mask, position_ids=position_ids)[0].detach().to('cpu')
+                if OPTDecoderLayer and isinstance(layer, OPTDecoderLayer):
+                    dense_layer_targets[j] = layer(sample_input, attention_mask=attention_mask)[0].detach().to('cpu')
+                else:
+                    dense_layer_targets[j] = layer(sample_input, attention_mask=attention_mask, position_ids=position_ids)[0].detach().to('cpu')
         
         if args.activation: 
             for h in handles_act:
@@ -337,7 +352,10 @@ def prune_safe(
                 
                 with torch.enable_grad(): 
                     with autocast(device_type='cuda', dtype=torch.bfloat16):
-                        outputs = layer(batch_inputs, attention_mask=attention_mask, position_ids=position_ids)[0]
+                        if OPTDecoderLayer and isinstance(layer, OPTDecoderLayer):
+                            outputs = layer(batch_inputs, attention_mask=attention_mask)[0]
+                        else:
+                            outputs = layer(batch_inputs, attention_mask=attention_mask, position_ids=position_ids)[0]
                         loss = loss_fn(outputs, batch_targets)
                         if args.accumulation_steps > 1:
                             loss = loss / args.accumulation_steps
@@ -354,7 +372,10 @@ def prune_safe(
                         if sam_input_cache: 
                             for cached_batch_input in sam_input_cache:
                                 with autocast(device_type='cuda', dtype=torch.bfloat16):
-                                    loss_sam_step = loss_fn(layer(cached_batch_input, attention_mask=attention_mask, position_ids=position_ids)[0], batch_targets)
+                                    if OPTDecoderLayer and isinstance(layer, OPTDecoderLayer):
+                                        loss_sam_step = loss_fn(layer(cached_batch_input, attention_mask=attention_mask)[0], batch_targets)
+                                    else:
+                                        loss_sam_step = loss_fn(layer(cached_batch_input, attention_mask=attention_mask, position_ids=position_ids)[0], batch_targets)
                                 if args.accumulation_steps > 1:
                                      loss_sam_step = loss_sam_step / args.accumulation_steps
                                 loss_sam_step.backward() 
@@ -362,7 +383,10 @@ def prune_safe(
                         else: 
                             if args.accumulation_steps == 1: 
                                 with autocast(device_type='cuda', dtype=torch.bfloat16):
-                                    outputs_perturbed = layer(batch_inputs, attention_mask=attention_mask, position_ids=position_ids)[0]
+                                    if OPTDecoderLayer and isinstance(layer, OPTDecoderLayer):
+                                        outputs_perturbed = layer(batch_inputs, attention_mask=attention_mask)[0]
+                                    else:
+                                        outputs_perturbed = layer(batch_inputs, attention_mask=attention_mask, position_ids=position_ids)[0]
                                     loss_perturbed = loss_fn(outputs_perturbed, batch_targets)
                                 loss_perturbed.backward()
 
@@ -386,7 +410,10 @@ def prune_safe(
         with torch.no_grad():
             for j in range(args.nsamples):
                 sample_input = current_inps[j].unsqueeze(0) # Inputs are already on device
-                current_layer_outputs[j] = layer(sample_input, attention_mask=attention_mask, position_ids=position_ids)[0].to('cpu')
+                if OPTDecoderLayer and isinstance(layer, OPTDecoderLayer):
+                    current_layer_outputs[j] = layer(sample_input, attention_mask=attention_mask)[0].to('cpu')
+                else:
+                    current_layer_outputs[j] = layer(sample_input, attention_mask=attention_mask, position_ids=position_ids)[0].to('cpu')
 
         layers[i] = layer.to('cpu') # Offload layer
         if args.activation:
@@ -434,7 +461,8 @@ def prune_alps(args,
     with torch.no_grad():
         inps, _, attention_mask, position_ids = prepare_calibration_input(model, dataloader, device, nsamples=args.nsamples)
 
-    layers = model.model.layers
+    layers = get_model_layers(model)
+
     current_layer_outputs = torch.zeros_like(inps)
     seqlen = model.seqlen 
 
@@ -470,7 +498,10 @@ def prune_alps(args,
         # Pass calibration data through the layer to populate ALPS_prune buffers
         for j in range(args.nsamples):
             sample_input = current_inps[j].unsqueeze(0)
-            _ = layer(sample_input, attention_mask=attention_mask, position_ids=position_ids)[0] # Output captured by hooks
+            if OPTDecoderLayer and isinstance(layer, OPTDecoderLayer):
+                _ = layer(sample_input, attention_mask=attention_mask)[0] # Output captured by hooks
+            else:
+                _ = layer(sample_input, attention_mask=attention_mask, position_ids=position_ids)[0] # Output captured by hooks
         
         for h in handles: # Remove hooks
             h.remove()
@@ -490,7 +521,10 @@ def prune_alps(args,
         with torch.no_grad():
             for j in range(args.nsamples):
                 sample_input = current_inps[j].unsqueeze(0)
-                current_layer_outputs[j] = layer(sample_input, attention_mask=attention_mask, position_ids=position_ids)[0].to('cpu')
+                if OPTDecoderLayer and isinstance(layer, OPTDecoderLayer):
+                    current_layer_outputs[j] = layer(sample_input, attention_mask=attention_mask)[0].to('cpu')
+                else:
+                    current_layer_outputs[j] = layer(sample_input, attention_mask=attention_mask, position_ids=position_ids)[0].to('cpu')
 
         layers[i] = layer.to('cpu') 
         layer_pruning_end_time = time.time()
@@ -543,7 +577,8 @@ def prune_sparsegpt(
     with torch.no_grad():
         inps, _, attention_mask, position_ids = prepare_calibration_input(model, dataloader, device, nsamples=args.nsamples)
 
-    layers = model.model.layers
+    layers = get_model_layers(model)
+
     current_layer_outputs = torch.zeros_like(inps) 
     logging.info('SparseGPT calibration data prepared.')
 
@@ -580,7 +615,10 @@ def prune_sparsegpt(
 
         for j in range(args.nsamples):
             sample_input = current_inps[j].unsqueeze(0)
-            _ = layer(sample_input, attention_mask=current_attention_mask, position_ids=current_position_ids)[0] 
+            if OPTDecoderLayer and isinstance(layer, OPTDecoderLayer):
+                _ = layer(sample_input, attention_mask=current_attention_mask)[0] 
+            else:
+                _ = layer(sample_input, attention_mask=current_attention_mask, position_ids=current_position_ids)[0] 
         
         for h in handles: 
             h.remove()
@@ -598,7 +636,10 @@ def prune_sparsegpt(
         with torch.no_grad():
             for j in range(args.nsamples):
                 sample_input = current_inps[j].unsqueeze(0)
-                current_layer_outputs[j] = layer(sample_input, attention_mask=current_attention_mask, position_ids=current_position_ids)[0].to('cpu')
+                if OPTDecoderLayer and isinstance(layer, OPTDecoderLayer):
+                    current_layer_outputs[j] = layer(sample_input, attention_mask=current_attention_mask)[0].to('cpu')
+                else:
+                    current_layer_outputs[j] = layer(sample_input, attention_mask=current_attention_mask, position_ids=current_position_ids)[0].to('cpu')
 
         layers[i] = layer.to('cpu') 
         del current_inps, current_attention_mask, current_position_ids, layer, sparsegpt_pruners
