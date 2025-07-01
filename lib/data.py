@@ -106,13 +106,14 @@ def get_dataset(
     #     # --- torch.load 대신 load_from_disk 사용 ---
     #     return load_from_disk(str(data_dir))
 
-    logging.info(f"No valid cache found. Generating {data_type} dataset for {dataset_name}...")
-    data_dir.mkdir(parents=True, exist_ok=True) # 디렉토리 생성
+
 
     raw_dataset = _get_raw_dataset(dataset_name, data_type)
     dataset = _process_and_tokenize(raw_dataset, dataset_name, tokenizer, nsamples, seqlen, seed)
 
     if save_to_cache:
+        logging.info(f"No valid cache found. Generating {data_type} dataset for {dataset_name}...")
+        data_dir.mkdir(parents=True, exist_ok=True) # 디렉토리 생성
         logging.info(f"Saving {data_type} dataset to {data_dir}")
         # --- torch.save 대신 save_to_disk 사용 ---
         dataset.save_to_disk(str(data_dir))
