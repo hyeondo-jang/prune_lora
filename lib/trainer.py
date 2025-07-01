@@ -212,6 +212,7 @@ class ADMMTrainer(Trainer):
                 self.optimizer = SAFE(
                     param_groups,
                     projection_fn=projection,
+                    alpha=self.args.admm_alpha,
                     lmda=self.args.admm_lmda, sparsity=self.args.sparsity_ratio, interval=self.args.admm_interval, 
                     lr=self.args.learning_rate, prune_n=self.args.prune_n, prune_m=self.args.prune_m, 
                     base_optimizer=base_optimizer, rho = self.args.rho, comparison_group=self.args.admm_projection_comparison_group,
@@ -221,6 +222,7 @@ class ADMMTrainer(Trainer):
                 self.optimizer = ADMM(
                     param_groups,
                     projection_fn = projection,
+                    alpha=self.args.admm_alpha,  # Over-relaxation parameter
                     lmda=self.args.admm_lmda, sparsity=self.args.sparsity_ratio, interval=self.args.admm_interval, 
                     lr=self.args.learning_rate, prune_n=self.args.prune_n, prune_m=self.args.prune_m, comparison_group=self.args.admm_projection_comparison_group,
                     base_optimizer = base_optimizer,

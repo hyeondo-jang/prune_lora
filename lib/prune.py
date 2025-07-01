@@ -724,6 +724,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         do_train=True,
         do_eval=True,
         # admm arguments
+        admm_alpha=FLAGS.admm_alpha,
         admm_lmda=FLAGS.admm_lmda,
         admm_initial_lmda=FLAGS.admm_initial_lmda,
         admm_lmda_schedule_mode=FLAGS.admm_lmda_schedule_mode,

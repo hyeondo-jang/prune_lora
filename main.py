@@ -180,6 +180,7 @@ if __name__ == '__main__':
     flags.DEFINE_enum('admm_projection_comparison_group', 'layer', ['layer','column', 'row'], 'Comparison group for ADMM projection (layer/column/row).')
     
     # ADMM Specific Config
+    flags.DEFINE_float('admm_alpha', 1.0, 'Alpha parameter for ADMM over-relaxation. default is 1.0')
     flags.DEFINE_float('admm_lmda', 0.1, 'Lambda penalty parameter for ADMM.')
     flags.DEFINE_float('admm_initial_lmda',0.0, 'Initial lambda value for ADMM (if using schedule).')
     flags.DEFINE_enum('admm_lmda_schedule_mode', 'constant', ['constant','linear','log','cosine'], 'Mode for lambda schedule (e.g., linear, cosine).')

@@ -8,6 +8,7 @@ class ADMM(torch.optim.Optimizer):
         sparsity: float,
         interval: int,
         base_optimizer: torch.optim.Optimizer = torch.optim.SGD,
+        alpha: float = 1.0,
         lmda: float = 1e-3,
         lr: float = 2e-4,
         prune_n: int = 0,
@@ -28,6 +29,7 @@ class ADMM(torch.optim.Optimizer):
             sparsity (float): Sparsity target.
             interval (int): Interval for dual update.
             base_optimizer (torch.optim.Optimizer): Base optimizer to use. e.g. torch.optim.Adam, torch.optim.SGD
+            alpha (float): Over-relaxation parameter for ADMM. Default is 1.0.
             lmda (float): penalty parameter.
             lr (float): Learning rate for the base optimizer.
             prune_n (int): n for n:m structured sparsity.
@@ -70,6 +72,9 @@ class ADMM(torch.optim.Optimizer):
         self.base_optimizer = base_optimizer(base_param_groups, **kwargs)
 
         ## other control variables
+        self.alpha = alpha
+        if not (0 <= self.alpha <= 2):
+            raise ValueError(f"alpha must be in the range [0, 2]. Got {self.alpha}.")
         self.importance_matrix = importance_matrix if importance_matrix is not None else None
         self.sparsity = sparsity
         self.interval = interval
@@ -141,8 +146,8 @@ class ADMM(torch.optim.Optimizer):
                                 comparison_group=self.comparison_group
                             )[0]
 
-                            u_new_i = duals[i].detach() + weights[i].detach() - z_new_i # U_t+1 = U_t + W_t+1 - Z_t+1
-                            
+                            u_new_i = duals[i].detach() + self.alpha * (weights[i].detach() - z_new_i) # U_t+1 = U_t + \alpha(W_t+1 - Z_t+1)
+
                             duals[i].copy_(u_new_i)
                             splits[i].copy_(z_new_i)
                         # z_input = [w.detach() + u.detach() for w, u in zip(weights, duals)] # proj (W_t+1 + U_t)
@@ -161,6 +166,7 @@ class SAFE(torch.optim.Optimizer):
                 sparsity: float,
                 interval: int,
                 base_optimizer: torch.optim.Optimizer = torch.optim.SGD,
+                alpha: float = 1.0,
                 lmda: float = 1e-3,
                 lr: float = 2e-4,
                 rho: float = 0.05,
@@ -181,6 +187,7 @@ class SAFE(torch.optim.Optimizer):
             sparsity (float): Sparsity target.
             interval (int): Interval for dual update.
             base_optimizer (torch.optim.Optimizer): Base optimizer to use for SAM.
+            alpha (float): Over-relaxation parameter for ADMM. Default is 1.0.
             lmda (float): penalty parameter.
             lr (float): Learning rate for the base optimizer.
             rho (float): Perturbation size for SAM.
@@ -224,6 +231,9 @@ class SAFE(torch.optim.Optimizer):
         self.base_optimizer = SAM(sam_param_groups, base_optimizer, rho=rho, **kwargs)
 
         ## other control variables
+        self.alpha = alpha
+        if not (0 <= self.alpha <= 2):
+            raise ValueError(f"alpha must be in the range [0, 2]. Got {self.alpha}.")
         self.importance_matrix = importance_matrix if importance_matrix is not None else None
         self.sparsity = sparsity
         self.interval = interval
@@ -300,7 +310,7 @@ class SAFE(torch.optim.Optimizer):
                                 comparison_group=self.comparison_group
                             )[0]
 
-                            u_new_i = duals[i].detach() + weights[i].detach() - z_new_i # U_t+1 = U_t + W_t+1 - Z_t+1
+                            u_new_i = duals[i].detach() + self.alpha * (weights[i].detach() - z_new_i) # U_t+1 = U_t + \alpha(W_t+1 - Z_t+1)
                             
                             duals[i].copy_(u_new_i)
                             splits[i].copy_(z_new_i)
