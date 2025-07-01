@@ -664,6 +664,7 @@ class AdmmTrainingArguments(TrainingArguments):
     # Standard TrainingArguments already cover most needs (lr, epochs, batch_size, etc.)
     # These might be redundant if ADMMTrainer reads them directly from FLAGS, but including
     # them here follows the pattern of passing config through the args object.
+    admm_alpha: float = field(default=1.0, metadata={"help": "Alpha parameter for ADMMM over-relaxation."})
     admm_lmda: float = field(default=0.001, metadata={"help": "Lambda (rho) penalty parameter for ADMM."})
     admm_initial_lmda: float = field(default=0.0, metadata={"help": "Initial lambda (rho) for ADMM for penalty scheduling. defaults to 0.0."})
     admm_lmda_schedule_mode: str = field(default='constant', metadata={"help": "Mode for lambda schedule (linear/cosine/exponential/constant)."})
