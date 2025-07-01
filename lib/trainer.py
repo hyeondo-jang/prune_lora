@@ -512,14 +512,13 @@ class ADMMTrainer(Trainer):
         # # 3. Calculate W-Z Distance (only on the main process)
         if self.is_world_process_zero():
             primal_residual = self.calculate_primal_residual(
-                model=self.model,
-                sparsity_ratio=self.args.sparsity_ratio,
-                prune_n=self.args.prune_n,
-                prune_m=self.args.prune_m,
-                device=self.args.device,
+                metric_key_prefix=metric_key_prefix
+            )
+            dual_residual = self.calculate_dual_residual(
                 metric_key_prefix=metric_key_prefix
             )
             metrics.update(primal_residual)
+            metrics.update(dual_residual)
 
         metrics = denumpify_detensorize(metrics)
         if hasattr(self, "jit_compilation_time"):
@@ -530,11 +529,6 @@ class ADMMTrainer(Trainer):
     # --- End Evaluation Methods ---
     def calculate_primal_residual(
         self,
-        model: nn.Module,
-        sparsity_ratio: float,
-        prune_n: int,
-        prune_m: int,
-        device: torch.device,
         metric_key_prefix: str = "eval",
         eps: float = 1e-12,          # small constant to prevent div-by-zero
     ) -> Dict[str, float]:
@@ -564,38 +558,36 @@ class ADMMTrainer(Trainer):
             f"{metric_key_prefix}_primal_residual": primal_residual.item(),
             f"{metric_key_prefix}_relative_residual": relative_residual.item(),
         }
-        # if not hasattr(model, 'optimizer') or model.optimizer is None:
-        # w - proj(w)
-        # wz_sq_sum   = torch.tensor(0.0, device=device)   # Σ‖w−z‖²
-        # w_sq_sum    = torch.tensor(0.0, device=device)   # Σ‖w‖²
-
-        # unwrapped = unwrap_model(model)
-        # layers    = find_layers(unwrapped, layers=[nn.Linear])
-
-        # for name, layer in layers.items():
-        #     if "lm_head" in name:
-        #         continue
-        #     w  = layer.weight.detach()
-        #     z  = projection(
-        #             w, sparsity=sparsity_ratio,
-        #             prune_n=prune_n, prune_m=prune_m
-        #         )[0].detach()
-
-        #     diff        = w - z
-        #     wz_sq_sum  += torch.sum(diff * diff)
-        #     w_sq_sum   += torch.sum(w * w)
-
-        # primal_residual   = torch.sqrt(wz_sq_sum).item()
-        # relative_residual = (torch.sqrt(wz_sq_sum) / (torch.sqrt(w_sq_sum) + eps)).item()
-
-        # logger.info(f"[metric] Σ‖w-z‖² = {wz_sq_sum.item():.4e}")
-        # logger.info(f"[metric] primal residual   = {primal_residual:.4e}")
-        # logger.info(f"[metric] relative residual = {relative_residual:.4e}")
-
-        # return {
-        #     f"{metric_key_prefix}_primal_residual"  : primal_residual,
-        #     f"{metric_key_prefix}_relative_residual": relative_residual,
-        # }
+    def calculate_dual_residual(
+        self,
+        metric_key_prefix: str = "eval",
+    ) -> Dict[str, float]:
+        """
+        Compute the dual residual for all nn.Linear layers except lm_head. (proj(w+u)-z)^2
+        Returns
+        -------
+        dict
+            {
+            "<prefix>_dual_residual"  : float,
+            "<prefix>_scaled_dual_residual": float
+            }
+        """
+        groups = self.optimizer.param_groups
+        for group in groups:
+            if group.get('admm', False):
+                weights = group['params']
+                duals = group['duals']
+                splits = group['splits']
+                lmda = group.get('lmda', self.args.admm_lmda)
+                dual_residual = 0.0
+                for w,u,z in zip (weights, duals, splits):
+                    z_new = projection([w+u], sparsity=self.optimizer.sparsity, prune_n=self.optimizer.prune_n, prune_m=self.optimizer.prune_m, comparison_group= self.optimizer.comparison_group)[0]
+                    dual_residual += torch.norm(z_new-z, p=2)**2
+                dual_residual = torch.sqrt(dual_residual)
+        return {
+            f"{metric_key_prefix}_dual_residual": dual_residual.item(),
+            f"{metric_key_prefix}_scaled_dual_residual": lmda * dual_residual.item(),
+        }
     
     # --- Training Methods ---
 

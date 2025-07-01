@@ -161,7 +161,7 @@ if __name__ == '__main__':
     flags.DEFINE_integer('admm_num_train_samples', 4, 'Number of training samples for ADMM.')
     flags.DEFINE_integer('admm_num_eval_samples', 4, 'Number of evaluation samples for ADMM.')
     flags.DEFINE_bool('admm_save_inputs', False, 'Whether to save processed ADMM training inputs.')
-    flags.DEFINE_string('admm_save_path', '', 'Path to save ADMM training results and checkpoints.')
+    flags.DEFINE_string('admm_save_path', None , 'Path to save ADMM training results and checkpoints.')
     flags.DEFINE_bool('save_model',False, 'Whether to save the pruned model after ADMM training.')
     flags.DEFINE_bool('is_safe', False, 'Whether to use SAFE')
     
@@ -172,7 +172,7 @@ if __name__ == '__main__':
     flags.DEFINE_integer('admm_batch_size', 2, 'Batch size for ADMM training.')
     flags.DEFINE_integer('admm_gradient_accumulation_steps', 4, 'Gradient accumulation steps for ADMM.')
     flags.DEFINE_bool('admm_gradient_checkpointing', True, 'Use gradient checkpointing for ADMM training.')
-    flags.DEFINE_float('admm_lr', 1e-4, 'Learning rate for ADMM base optimizer.')
+    flags.DEFINE_float('admm_lr', 2e-4, 'Learning rate for ADMM base optimizer.')
     flags.DEFINE_string('admm_lr_scheduler', 'linear', 'Learning rate scheduler type for ADMM.')
     flags.DEFINE_integer('admm_warmup_steps', 0, 'Warmup steps for ADMM learning rate scheduler.')
     flags.DEFINE_float('admm_weight_decay', 0.0, 'Weight decay for ADMM base optimizer.')
@@ -181,7 +181,7 @@ if __name__ == '__main__':
     
     # ADMM Specific Config
     flags.DEFINE_float('admm_alpha', 1.0, 'Alpha parameter for ADMM over-relaxation. default is 1.0')
-    flags.DEFINE_float('admm_lmda', 0.1, 'Lambda penalty parameter for ADMM.')
+    flags.DEFINE_float('admm_lmda', 0.01, 'Lambda penalty parameter for ADMM.')
     flags.DEFINE_float('admm_initial_lmda',0.0, 'Initial lambda value for ADMM (if using schedule).')
     flags.DEFINE_enum('admm_lmda_schedule_mode', 'constant', ['constant','linear','log','cosine'], 'Mode for lambda schedule (e.g., linear, cosine).')
     flags.DEFINE_enum('admm_sparsity_schedule_mode', 'constant', ['constant','linear','exponential','cosine','cubic','cubic'], 'Mode for sparsity schedule (e.g., cubic, linear).')
