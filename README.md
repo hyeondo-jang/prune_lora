@@ -66,7 +66,6 @@ torchrun --nproc_per_node=4 main.py \
     --model="meta-llama/Llama-2-7b-hf" \
     --prune_method="global_admm" \
     --sparsity_ratio=0.5 \
-    --admm_epochs=1 \
     --admm_steps=100 \
     --seed=0
 ```
