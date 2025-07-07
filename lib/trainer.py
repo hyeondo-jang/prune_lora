@@ -896,7 +896,15 @@ class ADMMTrainer(Trainer):
                         if getattr(self, 'do_grad_scaling', False): self.scaler.unscale_(self.optimizer)
                         if hasattr(self.optimizer, "clip_grad_norm"): self.optimizer.clip_grad_norm(args.max_grad_norm)
                         elif hasattr(model, "clip_grad_norm_"): model.clip_grad_norm_(args.max_grad_norm)
-                        else: nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                        else:
+                            if args.normalize_grad: ## gradient normalization
+                                grad_norm = nn.utils.get_total_norm(model.parameters())
+                                for p in model.parameters():
+                                    if p.grad is not None:
+                                        p.grad.div_(grad_norm)
+                            else:# default gradient clipping
+                                nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                            
 
                     optimizer_was_run = True
                     if self.deepspeed: pass

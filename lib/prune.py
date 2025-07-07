@@ -683,6 +683,8 @@ class AdmmTrainingArguments(TrainingArguments):
     rho: float = field(default=0.01, metadata={"help": "Rho parameter for SAFE pruning."})
     ## LOSS
     loss_type: str = field(default="ntp", metadata={"help": "Loss type for ADMM training (should be 'rem' or 'ntp)."})
+    ## gradient normalization
+    normalize_grad: bool = field(default=False, metadata={"help": "Normalize gradients during ADMM training. Note that gradient normalization is only performed with respect to the gradients of the training objective."})
 
 # --- globalprune_admm function ---
 def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
@@ -741,6 +743,8 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         #safe
         is_safe=FLAGS.is_safe,  # Use this flag to determine if SAFE pruning is used
         rho=FLAGS.rho,  # Rho parameter for SAFE pruning
+        ## gradient normalization
+        normalize_grad=FLAGS.normalize_grad,
     )
 
     # --- 로깅은 메인 프로세스에서만 수행 ---

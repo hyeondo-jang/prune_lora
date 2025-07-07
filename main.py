@@ -192,7 +192,7 @@ if __name__ == '__main__':
     flags.DEFINE_bool('admm_activation_aware', False, 'Use activation-aware projection in ADMM.')
     flags.DEFINE_bool('admm_decouple', False, 'Decouple proximal update in ADMM (for Adam).')
     flags.DEFINE_enum('loss_type', 'ntp', ['rem', 'ntp'], "Loss type for ADMM training ('rem' for reconstruction, 'ntp' for next token prediction).")
-
+    flags.DEFINE_bool('normalize_grad', False, 'Whether to normalize gradients during ADMM training. Note that gradient normalization is only performed with respect to the gradients of the training objective.')
     # Logging & Evaluation
     flags.DEFINE_integer('admm_logging_steps', 10, 'Logging step interval for ADMM training.')
     flags.DEFINE_integer('admm_eval_steps', 100, 'Evaluation step interval for ADMM training.')
