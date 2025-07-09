@@ -679,41 +679,10 @@ class ADMMTrainer(Trainer):
         """
         model.train()
         inputs = self._prepare_inputs(inputs)
-        # --- capture activation importance matrix for ADMM projection if needed ---
-        is_dual_update_step = (self.optimizer.current_step + 1) % self.optimizer.interval == 0
-        if self.args.admm_projection_mode == 'activation' and is_dual_update_step:
-            hooks = []
-            importance_vectors = []
-            admm_param_ids = {id(p) for group in self.optimizer.param_groups if group.get('admm') for p in group['params']}
-            
-            def create_hook(output_list):
-                def hook(module, inp, out):
-                    act_tensor = inp[0].detach()
-                    act_reshaped = act_tensor.view(-1, act_tensor.shape[-1])
-                    norm_vec = torch.norm(act_reshaped, p=2, dim=0).pow(2)
-                    output_list.append(norm_vec)
-                return hook
 
-            for module in model.modules():
-                if isinstance(module, nn.Linear) and id(module.weight) in admm_param_ids:
-                    hooks.append(module.register_forward_hook(create_hook(importance_vectors)))
-        
-        # --- Calculate Primary Loss for Backward Pass ---
-        inputs_for_loss = inputs.copy() # Keep original inputs for potential re-use
+        #Loss calculation
         with self.compute_loss_context_manager():
-            loss = self.compute_loss(model, inputs_for_loss, return_outputs=False)
-
-        # -- remove activation hooks and captured activations if needed ---
-        if self.args.admm_projection_mode == 'activation' and is_dual_update_step:
-            # Remove hooks
-            for hook in hooks:
-                hook.remove()
-            # If captured_activations is not empty, calculate the importance matrix
-            if importance_vectors:
-                self.optimizer.update_importance_matrix(importance_vectors)
-            del hooks
-            del importance_vectors
-            torch.cuda.empty_cache()  # Clear cache to avoid OOM
+            loss = self.compute_loss(model, inputs, return_outputs=False)
 
         # --- Gradient Calculation and Scaling ---
         if self.args.n_gpu > 1:
@@ -734,35 +703,6 @@ class ADMMTrainer(Trainer):
 
         del inputs
         torch.cuda.empty_cache()  # Clear cache to avoid OOM
-        # --- Log Training Metrics ---
-        # log_metrics = {}
-        # detached_loss = loss.detach() # This is the potentially combined loss
-
-        # # Scale loss for logging if not using deepspeed
-        # log_loss_val = detached_loss.item()
-        # if not self.deepspeed:
-        #      log_loss_val /= self.args.gradient_accumulation_steps
-
-        # if self.args.loss_type == 'rem': 
-        #      log_metrics["train_rem_loss"] = log_loss_val
-        # else:
-        #      log_metrics["train_cross_entropy_loss"] = log_loss_val
-        #      if self.state.is_world_process_zero and (self.state.global_step + 1) % self.args.logging_steps == 0:
-        #          try:
-        #              # Unscale loss before calculating perplexity if not using deepspeed
-        #              unscaled_ce_loss = log_loss_val * self.args.gradient_accumulation_steps if not self.deepspeed else log_loss_val
-        #              perplexity = math.exp(unscaled_ce_loss)
-        #              log_metrics["train_perplexity"] = perplexity
-        #          except OverflowError:
-        #              log_metrics["train_perplexity"] = float('inf')
-
-
-        # # Log the collected metrics via the Trainer's mechanism
-        # if log_metrics and self.state.is_world_process_zero:
-        #     if (self.state.global_step + 1) % self.args.logging_steps == 0:
-        #          self.log(log_metrics)
-
-        # Return the primary loss scaled by accumulation steps (if not using deepspeed)
         detached_loss = loss.detach()  # Detach the loss for logging and return
         return detached_loss
     
@@ -903,12 +843,34 @@ class ADMMTrainer(Trainer):
 
                 if step % args.gradient_accumulation_steps == 0:
                     self.control = self.callback_handler.on_step_begin(args, self.state, self.control)
+                ## hook for activation aware generalized projection. use hook to catch micro-batch activation, accumulate importance vectors
+                hooks = []
+                if self.args.admm_projection_mode == 'activation':
+                    is_first_microbatch = (step % self.args.gradient_accumulation_steps == 0)
+                    if is_first_microbatch:
+                        self.importance_accumulator = {}
+                    
+                    admm_param_ids = {id(p) for group in self.optimizer.param_groups if group.get('admm') for p in group['params']}
+                    def create_hook(param_id, accumulator_dict):
+                        @torch.no_grad()
+                        def hook(module, inp, out)->None:
+                            act_tensor = inp[0] if isinstance(inp, tuple) else inp
+                            mean_act_tensor = torch.mean(act_tensor, dim=0)
+                            norm_vec = torch.norm(mean_act_tensor, p=2, dim=0).pow(2).cpu()
+                            if param_id not in accumulator_dict: accumulator_dict[param_id] = norm_vec
+                            else: accumulator_dict[param_id].add_(norm_vec)
+                            del act_tensor, mean_act_tensor, norm_vec
+                        return hook
+                    
+                    for module in model.modules():
+                        if isinstance(module, nn.Linear) and id(module.weight) in admm_param_ids:
+                            hooks.append(module.register_forward_hook(create_hook(id(module.weight), self.importance_accumulator)))
 
-                # step
-                is_sync_step = (step + 1) % args.gradient_accumulation_steps == 0
-                # sync_context = model.no_sync() if args.local_rank != -1 and not is_sync_step and getattr(args, '_no_sync_in_gradient_accumulation', False) else contextlib.nullcontext()
-                # with sync_context:
-                tr_loss_step = self.training_step(model, inputs) # Computes loss, calls backward
+                tr_loss_step = self.training_step(model, inputs) # Now calls the simplified training_step
+
+                if hooks:
+                    for h in hooks: h.remove()
+                    del hooks
                 if args.logging_nan_inf_filter and (torch.isnan(tr_loss_step) or torch.isinf(tr_loss_step)):
                     avg_scaled_loss = tr_loss / (1 + self.state.global_step - self._globalstep_last_logged)
                     tr_loss += avg_scaled_loss
@@ -935,7 +897,25 @@ class ADMMTrainer(Trainer):
                                         p.grad.div_(grad_norm)
                             else:# default gradient clipping
                                 nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-                            
+
+                    ## activation generalized projection. reduce on micro-batch, update importance matrix
+                    is_dual_update_step = (self.optimizer.current_step + 1) % self.optimizer.interval == 0
+                    if self.args.admm_projection_mode == 'activation' and is_dual_update_step:
+
+                        if hasattr(self, 'importance_accumulator') and self.importance_accumulator:
+                            admm_params = next(g['params'] for g in self.optimizer.param_groups if g.get('admm'))
+                            num_accumulation_steps = self.args.gradient_accumulation_steps
+                            final_importance_vectors = [
+                                (self.importance_accumulator.get(id(p)) / num_accumulation_steps) if self.importance_accumulator.get(id(p)) is not None else None
+                                for p in admm_params
+                            ]
+                            if all(v is not None for v in final_importance_vectors):
+                                device = admm_params[0].device
+                                vectors_on_device = [v.to(device) for v in final_importance_vectors]
+                                self.optimizer.update_importance_matrix(vectors_on_device)
+                                del vectors_on_device
+                            del self.importance_accumulator
+                            torch.cuda.empty_cache()
 
                     optimizer_was_run = True
                     if self.deepspeed: pass

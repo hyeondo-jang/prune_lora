@@ -139,16 +139,16 @@ class ADMM(torch.optim.Optimizer):
                         if not (len(weights) == len(duals) == len(splits)):
                             print(f"Warning: Mismatch in lengths of weights, duals, splits for an ADMM group. Skipping dual/split update.")
                             continue
+
                         for i in range(len(duals)):
                             z_input_i = weights[i].detach() + duals[i].detach()
-                            if self.projection_mode == 'gradient':
+                            importance_matrix = self.importance_matrix
+                            if self.projection_mode == 'gradient': ## on the fly update for gradient projection (memory efficient)
                                 grad_input_i = weights[i].grad.detach()
                                 importance_matrix = grad_input_i.pow(2)
                             elif self.projection_mode == 'activation':
                                 if self.importance_matrix is not None and i<len(self.importance_matrix):
-                                    importance_matrix = self.importance_matrix[i].unsqueeze(0) # (c_in)->(1,c_in). will be broadcasted in projection (diag(A^tA))
-                            else:  # identity projection
-                                importance_matrix = None 
+                                    importance_matrix = self.importance_matrix[i].unsqueeze(0).to(z_input_i.device) # (c_in)->(1,c_in). will be broadcasted in projection (diag(A^tA))
                             z_new_i = self.projection(
                                 [z_input_i],
                                 sparsity,
