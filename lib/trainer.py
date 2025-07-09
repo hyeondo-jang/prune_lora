@@ -225,6 +225,7 @@ class ADMMTrainer(Trainer):
                     alpha=self.args.admm_alpha,  # Over-relaxation parameter
                     lmda=self.args.admm_lmda, sparsity=self.args.sparsity_ratio, interval=self.args.admm_interval, 
                     lr=self.args.learning_rate, prune_n=self.args.prune_n, prune_m=self.args.prune_m, comparison_group=self.args.admm_projection_comparison_group,
+                    projection_mode= self.args.admm_projection_mode,
                     base_optimizer = base_optimizer,
                     **base_optimizer_kwargs,
                 )
@@ -678,11 +679,41 @@ class ADMMTrainer(Trainer):
         """
         model.train()
         inputs = self._prepare_inputs(inputs)
+        # --- capture activation importance matrix for ADMM projection if needed ---
+        is_dual_update_step = (self.optimizer.current_step + 1) % self.optimizer.interval == 0
+        if self.args.admm_projection_mode == 'activation' and is_dual_update_step:
+            hooks = []
+            importance_vectors = []
+            admm_param_ids = {id(p) for group in self.optimizer.param_groups if group.get('admm') for p in group['params']}
+            
+            def create_hook(output_list):
+                def hook(module, inp, out):
+                    act_tensor = inp[0].detach()
+                    act_reshaped = act_tensor.view(-1, act_tensor.shape[-1])
+                    norm_vec = torch.norm(act_reshaped, p=2, dim=0).pow(2)
+                    output_list.append(norm_vec)
+                return hook
 
+            for module in model.modules():
+                if isinstance(module, nn.Linear) and id(module.weight) in admm_param_ids:
+                    hooks.append(module.register_forward_hook(create_hook(importance_vectors)))
+        
         # --- Calculate Primary Loss for Backward Pass ---
         inputs_for_loss = inputs.copy() # Keep original inputs for potential re-use
         with self.compute_loss_context_manager():
             loss = self.compute_loss(model, inputs_for_loss, return_outputs=False)
+
+        # -- remove activation hooks and captured activations if needed ---
+        if self.args.admm_projection_mode == 'activation' and is_dual_update_step:
+            # Remove hooks
+            for hook in hooks:
+                hook.remove()
+            # If captured_activations is not empty, calculate the importance matrix
+            if importance_vectors:
+                self.optimizer.update_importance_matrix(importance_vectors)
+            del hooks
+            del importance_vectors
+            torch.cuda.empty_cache()  # Clear cache to avoid OOM
 
         # --- Gradient Calculation and Scaling ---
         if self.args.n_gpu > 1:

@@ -15,6 +15,7 @@ class ADMM(torch.optim.Optimizer):
         prune_m: int = 0,
         importance_matrix: list[torch.Tensor] = None,
         comparison_group: str = 'layer',
+        projection_mode: str = 'identity',
         **kwargs
     ):
         """
@@ -36,6 +37,7 @@ class ADMM(torch.optim.Optimizer):
             prune_m (int): m for n:m structured sparsity.
             importance_matrix (list[torch.Tensor], optional): Importance matrix used for generalized projection. Must have the same structure as param_groups with admm=True.
             comparison_group (str): Comparison group for ADMM projection ('layer', 'column', 'row').
+            projection_mode (str): Mode for the projection function. Default is 'identity (P=I)'. We currently support 'gradient' (P = diag(nabla L nabla L^T)) and 'activation' (P = diag(A^TA)). Note that 'activation' needs importance_matrix to be provided.
             **kwargs: Additional arguments for the base optimizer.
         """
         if not callable(projection_fn):
@@ -76,6 +78,9 @@ class ADMM(torch.optim.Optimizer):
         if not (0 <= self.alpha <= 2):
             raise ValueError(f"alpha must be in the range [0, 2]. Got {self.alpha}.")
         self.importance_matrix = importance_matrix if importance_matrix is not None else None
+        self.projection_mode = projection_mode.lower()
+        if self.projection_mode not in ['identity', 'gradient', 'activation']:
+            raise ValueError(f"projection_mode must be one of 'identity', 'gradient', 'activation'. Got {self.projection_mode}.")
         self.sparsity = sparsity
         self.interval = interval
         self.current_step = 0
@@ -83,8 +88,8 @@ class ADMM(torch.optim.Optimizer):
         self.prune_m = prune_m
 
     def update_importance_matrix(self, importance_matrix):
-        if len(importance_matrix) != len(self.param_groups):
-            raise ValueError("importance_matrix must have the same length as param_groups.")
+        if len(importance_matrix) != len(self.param_groups[0]['params']):
+            raise ValueError("importance_matrix must have the same length as params in the first ADMM(weight) group.")
         self.importance_matrix = importance_matrix
 
     def final_projection(self):
@@ -136,13 +141,20 @@ class ADMM(torch.optim.Optimizer):
                             continue
                         for i in range(len(duals)):
                             z_input_i = weights[i].detach() + duals[i].detach()
-
+                            if self.projection_mode == 'gradient':
+                                grad_input_i = weights[i].grad.detach()
+                                importance_matrix = grad_input_i.pow(2)
+                            elif self.projection_mode == 'activation':
+                                if self.importance_matrix is not None and i<len(self.importance_matrix):
+                                    importance_matrix = self.importance_matrix[i].unsqueeze(0) # (c_in)->(1,c_in). will be broadcasted in projection (diag(A^tA))
+                            else:  # identity projection
+                                importance_matrix = None 
                             z_new_i = self.projection(
                                 [z_input_i],
                                 sparsity,
                                 prune_n=self.prune_n,
                                 prune_m=self.prune_m,
-                                importance_matrix=self.importance_matrix,
+                                importance_matrix=importance_matrix,
                                 comparison_group=self.comparison_group
                             )[0]
 
@@ -150,14 +162,8 @@ class ADMM(torch.optim.Optimizer):
 
                             duals[i].copy_(u_new_i)
                             splits[i].copy_(z_new_i)
-                        # z_input = [w.detach() + u.detach() for w, u in zip(weights, duals)] # proj (W_t+1 + U_t)
-                        # z_new = self.projection(z_input, sparsity, prune_n=self.prune_n, prune_m=self.prune_m, importance_matrix=self.importance_matrix)
-                        # u_new = [u.detach() + w.detach() - z_n.detach() for u, w, z_n in zip(duals, weights, z_new)] # U_t+1 = U_t + W_t+1 - Z_t+1
-                        
-                        # for i in range(len(duals)): # Iterate using index to ensure correct assignment
-                        #     duals[i].copy_(u_new[i])
-                        #     splits[i].copy_(z_new[i])
         self.current_step += 1
+
 
 class SAFE(torch.optim.Optimizer):
     def __init__(self, 

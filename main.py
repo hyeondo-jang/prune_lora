@@ -168,7 +168,7 @@ if __name__ == '__main__':
 
     # Training Loop Config
     flags.DEFINE_integer('admm_epochs', 1, 'Number of epochs for ADMM training.')
-    flags.DEFINE_integer('admm_steps', 100, 'Max steps for ADMM training. Overrides admm_epochs if > 0.')
+    flags.DEFINE_integer('admm_steps', 10, 'Max steps for ADMM training. Overrides admm_epochs if > 0.')
     flags.DEFINE_integer('admm_batch_size', 2, 'Batch size for ADMM training.')
     flags.DEFINE_integer('admm_gradient_accumulation_steps', 4, 'Gradient accumulation steps for ADMM.')
     flags.DEFINE_bool('admm_gradient_checkpointing', True, 'Use gradient checkpointing for ADMM training.')
@@ -178,6 +178,7 @@ if __name__ == '__main__':
     flags.DEFINE_float('admm_weight_decay', 0.0, 'Weight decay for ADMM base optimizer.')
     flags.DEFINE_enum('admm_precision', 'bf16', ['fp32', 'fp16', 'bf16'], 'Precision for ADMM training (fp16/bf16 enables Trainer autocast).')
     flags.DEFINE_enum('admm_projection_comparison_group', 'layer', ['layer','column', 'row'], 'Comparison group for ADMM projection (layer/column/row).')
+    flags.DEFINE_enum('admm_projection_mode', 'identity', ['identity', 'activation', 'gradient'], 'Generalized projection mode for ADMM (identity/activation/gradient).')
     
     # ADMM Specific Config
     flags.DEFINE_float('admm_alpha', 1.0, 'Alpha parameter for ADMM over-relaxation. default is 1.0')

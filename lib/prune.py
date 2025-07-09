@@ -671,6 +671,7 @@ class AdmmTrainingArguments(TrainingArguments):
     admm_sparsity_schedule_mode: str = field(default='constant', metadata={"help": "Mode for sparsity schedule (linear/cosine/exponential/constant)."})
     admm_interval: int = field(default=32, metadata={"help": "Interval for ADMM projection and dual updates."})
     admm_projection_comparison_group: str = field(default='layer', metadata={"help": "Comparison group for ADMM projection (layer/column/row)."})
+    admm_projection_mode: str = field(default='identity', metadata={"help": "Generalized projection mode for ADMM (identity/activation/gradient)."})
     prune_n: int = field(default=0, metadata={"help": "N for N:M sparsity."})
     prune_m: int = field(default=0, metadata={"help": "M for N:M sparsity."})
     sparsity_ratio: float = field(default=0.0, metadata={"help": "Target sparsity ratio (for reference)."})
@@ -737,6 +738,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         admm_interval=FLAGS.admm_interval,
         base_optimizer_type=FLAGS.admm_base_optimizer,
         admm_projection_comparison_group=FLAGS.admm_projection_comparison_group,
+        admm_projection_mode=FLAGS.admm_projection_mode,
         prune_n=prune_n,
         prune_m=prune_m,
         loss_type=FLAGS.loss_type,
