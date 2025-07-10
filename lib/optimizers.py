@@ -129,6 +129,7 @@ class ADMM(torch.optim.Optimizer):
                 for group in self.param_groups:
                     if group.get('admm', False):
                         weights = group['params'] # W_t+1
+                        lmda = group['lmda']
                         duals = group['duals']   # U_t
                         splits = group['splits'] # Z_t
                         sparsity = self.sparsity
@@ -144,7 +145,8 @@ class ADMM(torch.optim.Optimizer):
                             z_input_i = weights[i].detach() + duals[i].detach()
                             importance_matrix = self.importance_matrix
                             if self.projection_mode == 'gradient': ## on the fly update for gradient projection (memory efficient)
-                                grad_input_i = weights[i].grad.detach()
+                                proximal = lmda * (weights[i].detach() - splits[i].detach() + duals[i].detach()) # proximal gradient w-z+u
+                                grad_input_i = weights[i].grad.detach() - proximal 
                                 importance_matrix = grad_input_i.pow(2)
                             elif self.projection_mode == 'activation':
                                 if self.importance_matrix is not None and i<len(self.importance_matrix):
