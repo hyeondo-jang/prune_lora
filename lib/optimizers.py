@@ -185,7 +185,7 @@ class ADMM(torch.optim.Optimizer):
                                 grad_input_i = weights[i].grad.detach() - proximal
                                 current_importance = torch.pow(grad_input_i, 2)
                                 if self.importance_ema <= 0:
-                                    importance_matrix = current_importance
+                                    importance_matrix_i = current_importance
                                 # EMA
                                 else:
                                     if not self.importance_matrix:
