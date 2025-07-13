@@ -1,11 +1,12 @@
 import torch
+from typing import Union, Dict
 
 class ADMM(torch.optim.Optimizer):
     def __init__(
         self, 
         param_groups,
         projection_fn,
-        sparsity: float,
+        sparsity: Union[float, Dict[int, float]], # sparsity를 float 또는 dict로 받을 수 있도록 수정
         interval: int,
         base_optimizer: torch.optim.Optimizer = torch.optim.SGD,
         alpha: float = 1.0,
@@ -44,35 +45,53 @@ class ADMM(torch.optim.Optimizer):
         """
         if not callable(projection_fn):
             raise TypeError("projection_fn must be a callable function.")
+        
+        # Define defaults and call the parent constructor FIRST.
+        # This initializes self.param_groups and self.state.
+        defaults = dict(lr=lr, **kwargs)
+        super(ADMM, self).__init__(param_groups, defaults)
+
         self.projection= projection_fn
         self.comparison_group = comparison_group.lower()
         if self.comparison_group not in ['layer', 'column', 'row']:
             raise ValueError(f"comparison_group must be one of 'layer', 'column', 'row'. Got {self.comparison_group}.")
-        processed_param_groups = []
-        for i, group in enumerate(param_groups):
+
+        # Now, iterate through self.param_groups to set up ADMM-specific state and variables.
+        for i, group in enumerate(self.param_groups):
             if group.get('admm', False):
-                if not group['params']: # Should not happen if group is valid
+                if not group['params']:
                     print(f"Warning: ADMM group {i} has no params.")
-                    processed_param_groups.append(group)
                     continue
-                admm_params_list = group['params'] # This should be a list of tensors
+                
+                admm_params_list = group['params']
+
+                # Initialize per-parameter sparsity in the optimizer's state
+                for p in admm_params_list:
+                    # self.state[p] is now a valid defaultdict
+                    self.state[p]['sparsity'] = sparsity if isinstance(sparsity, float) else sparsity.get(id(p), 0.5)
 
                 group['duals'] = [torch.zeros_like(p, device=p.device) for p in admm_params_list]
                 if importance_matrix is not None:
                     if len(importance_matrix) != len(admm_params_list):
                         raise ValueError(f"importance_matrix must have the same length as params in group {i}.")
-                group['splits'] = self.projection(admm_params_list, sparsity, prune_n, prune_m, importance_matrix,comparison_group=self.comparison_group)
+                
+                # Use per-parameter sparsity for the initial projection
+                splits_list = []
+                for p in admm_params_list:
+                    # Now this line is safe to call
+                    p_sparsity = self.state[p]['sparsity']
+                    splits_list.append(self.projection([p], p_sparsity, prune_n, prune_m, importance_matrix, comparison_group=self.comparison_group)[0])
+                group['splits'] = splits_list
 
                 if 'lmda' not in group:
                     group['lmda'] = lmda
-            processed_param_groups.append(group)
         
-        defaults = dict(lr=lr, **kwargs) # lmda is now per-group
-        super(ADMM, self).__init__(processed_param_groups, defaults)
+        # Create the base optimizer using the processed param_groups
         base_param_groups = []
-        for pg in self.param_groups: # self.param_groups is now processed_param_groups
-            sam_pg = {k: v for k, v in pg.items() if k not in ['duals', 'splits', 'admm', 'lmda']}
-            base_param_groups.append(sam_pg)
+        for pg in self.param_groups:
+            # Filter out ADMM-specific keys for the base optimizer
+            base_pg = {k: v for k, v in pg.items() if k not in ['duals', 'splits', 'admm', 'lmda']}
+            base_param_groups.append(base_pg)
         self.base_optimizer = base_optimizer(base_param_groups, **kwargs)
 
         ## other control variables
@@ -84,7 +103,7 @@ class ADMM(torch.optim.Optimizer):
         if self.projection_mode not in ['identity', 'gradient', 'activation']:
             raise ValueError(f"projection_mode must be one of 'identity', 'gradient', 'activation'. Got {self.projection_mode}.")
         self.importance_ema = importance_ema
-        self.sparsity = sparsity
+        # self.sparsity는 이제 사용되지 않음. self.state[p]['sparsity']를 사용.
         self.interval = interval
         self.current_step = 0
         self.prune_n = prune_n
@@ -102,20 +121,30 @@ class ADMM(torch.optim.Optimizer):
         else:
             self.importance_matrix = importance_matrix
 
+    def update_sparsity(self, sparsity_map: Dict[int, float]):
+        """Updates the sparsity for each parameter from a dictionary."""
+        for group in self.param_groups:
+            if group.get('admm', False):
+                for p in group['params']:
+                    if id(p) in sparsity_map:
+                        self.state[p]['sparsity'] = sparsity_map[id(p)]
+
     def final_projection(self):
         for group in self.param_groups:
             if group.get('admm', False):
                 weights = group['params']
-                final_weights = self.projection(
-                    weights,
-                    self.sparsity,
-                    prune_n=self.prune_n,
-                    prune_m=self.prune_m,
-                    importance_matrix=self.importance_matrix,
-                    comparison_group=self.comparison_group
-                )
-                for w,fw in zip(weights,final_weights):
-                    w.data.copy_(fw)
+                for i in range(len(weights)):
+                    w = weights[i]
+                    p_sparsity = self.state[w].get('sparsity', 0.5) # 기본값 제공
+                    final_weight=self.projection(
+                        w,
+                        p_sparsity,
+                        prune_n=self.prune_n,
+                        prune_m=self.prune_m,
+                        importance_matrix=self.importance_matrix[i],
+                        comparison_group=self.comparison_group
+                    )[0]
+                    w.data.copy_(final_weight)
 
     @torch.no_grad()
     def step(self, zero_grad=False):
@@ -126,7 +155,6 @@ class ADMM(torch.optim.Optimizer):
                 lmda = group['lmda']
                 duals = group['duals']
                 splits = group['splits']
-                sparsity = self.sparsity
 
                 for i in range(len(weights)):
                     proximal = lmda * (weights[i].detach() - splits[i].detach() + duals[i].detach()) # proximal gradient w-z+u
@@ -142,7 +170,6 @@ class ADMM(torch.optim.Optimizer):
                         lmda = group['lmda']
                         duals = group['duals']   # U_t
                         splits = group['splits'] # Z_t
-                        sparsity = self.sparsity
 
                         if not all([weights, duals, splits]):
                             print(f"Warning: ADMM group missing weights, duals, or splits. Skipping dual/split update for this group.")
@@ -152,6 +179,7 @@ class ADMM(torch.optim.Optimizer):
                             continue
                         for i in range(len(duals)):
                             z_input_i = weights[i].detach() + duals[i].detach()
+                            importance_matrix_i = None # 기본값
                             if self.projection_mode == 'gradient':
                                 proximal = lmda * (weights[i].detach() - splits[i].detach() + duals[i].detach())
                                 grad_input_i = weights[i].grad.detach() - proximal
@@ -164,17 +192,20 @@ class ADMM(torch.optim.Optimizer):
                                         self.importance_matrix = [torch.zeros_like(p) for p in weights]
                                     beta = self.importance_ema
                                     self.importance_matrix[i].mul_(beta).add_(current_importance, alpha=1 - beta)
-                                    importance_matrix = self.importance_matrix[i]
+                                    importance_matrix_i = self.importance_matrix[i]
                             elif self.projection_mode == 'activation':
                                 if self.importance_matrix is not None and i<len(self.importance_matrix):
-                                    importance_matrix = self.importance_matrix[i].unsqueeze(0).to(z_input_i.device) # (c_in)->(1,c_in). will be broadcasted in projection (diag(A^tA))
+                                    importance_matrix_i = self.importance_matrix[i].unsqueeze(0).to(z_input_i.device)
+
+                            # 파라미터별 sparsity를 state에서 가져와 사용
+                            p_sparsity = self.state[weights[i]].get('sparsity', 0.5)
 
                             z_new_i = self.projection(
                                 [z_input_i],
-                                sparsity,
+                                p_sparsity,
                                 prune_n=self.prune_n,
                                 prune_m=self.prune_m,
-                                importance_matrix=importance_matrix,
+                                importance_matrix=importance_matrix_i,
                                 comparison_group=self.comparison_group
                             )[0]
 
@@ -300,7 +331,6 @@ class SAFE(torch.optim.Optimizer):
                 lmda = group['lmda']
                 duals = group['duals']
                 splits = group['splits']
-                sparsity = self.sparsity
 
                 for i in range(len(weights)):
                     proximal = lmda * (weights[i].detach() - splits[i].detach() + duals[i].detach()) # proximal gradient w-z+u
@@ -315,7 +345,6 @@ class SAFE(torch.optim.Optimizer):
                         weights = group['params'] # W_t+1
                         duals = group['duals']   # U_t
                         splits = group['splits'] # Z_t
-                        sparsity = self.sparsity
 
                         if not all([weights, duals, splits]):
                             print(f"Warning: ADMM group missing weights, duals, or splits. Skipping dual/split update for this group.")
@@ -358,7 +387,7 @@ class SAFE(torch.optim.Optimizer):
         self.first_step(zero_grad=True)
         closure()
         self.second_step()
-   
+
 
 class SAM(torch.optim.Optimizer):
     def __init__(

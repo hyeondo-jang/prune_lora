@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader, Dataset
 # 외부 라이브러리
 import numpy as np
 from packaging import version
+import re
 
 # Hugging Face Transformers 관련 (핵심 모듈)
 from transformers import Trainer, TrainingArguments
@@ -237,9 +238,45 @@ class ADMMTrainer(Trainer):
     def create_optimizer_and_scheduler(self, num_training_steps: int):
         """
         Override to create the ADMM optimizer and ensure the scheduler targets the base optimizer.
+        If adaptive sparsity is enabled, it's calculated once before training starts.
         """
         self.create_optimizer()
         optimizer = self.optimizer
+
+        # =================================================================
+        # ADAPTIVE SPARSITY ALLOCATION (INITIAL PHASE - ONCE)
+        # =================================================================
+        if getattr(self.args, 'admm_adaptive_sparsity', False):
+            if self.is_world_process_zero():
+                logger.info("Calculating adaptive sparsity based on the first batch...")
+
+            # 1. Get the first training batch
+            train_dataloader = self.get_train_dataloader()
+            first_batch = next(iter(train_dataloader))
+
+            # 2. Perform a "dry run" to compute gradients
+            self.training_step(self.model, first_batch)
+
+            # 3. Calculate sparsity and apply it to the optimizer
+            param_sparsity_map, block_sparsity_map = self.calculate_adaptive_sparsity(
+                model=unwrap_model(self.model),
+                optimizer=self.optimizer,
+                target_sparsity=self.args.sparsity_ratio,
+                num_layers=self.model.config.num_hidden_layers
+            )
+            if param_sparsity_map:
+                self.optimizer.update_sparsity(param_sparsity_map)
+                if self.is_world_process_zero() and block_sparsity_map:
+                    logger.info("Fixed adaptive sparsities for training.")
+                    # Log the allocated sparsity for each block directly from the returned map
+                    sorted_blocks = sorted(block_sparsity_map.items())
+                    for layer_idx, sparsity in sorted_blocks:
+                        logger.info(f"  - Block {layer_idx:02d} allocated sparsity: {sparsity:.4f}")
+
+            # 4. Zero out the gradients from the dry run
+            self.model.zero_grad()
+        # =================================================================
+
         self.create_scheduler(num_training_steps=num_training_steps, optimizer=optimizer.base_optimizer)
         if self.is_world_process_zero():
             logger.info("ADMM optimizer and scheduler created (scheduler targets base optimizer).")
@@ -271,6 +308,8 @@ class ADMMTrainer(Trainer):
                 mode=self.args.admm_lmda_schedule_mode
             )
         if self.sparsity_scheduler is None:
+            if self.args.admm_adaptive_sparsity:
+                NotImplementedError("Adaptive sparsity-aware scheduling is not implemented yet.")
             self.sparsity_scheduler = SparsityScheduler(
                 optimizer=self.optimizer,
                 initial_sparsity= 0.0,
@@ -901,6 +940,7 @@ class ADMMTrainer(Trainer):
 
                     ## activation generalized projection. reduce on micro-batch, update importance matrix
                     is_dual_update_step = (self.optimizer.current_step + 1) % self.optimizer.interval == 0
+                    
                     if self.args.admm_projection_mode == 'activation' and is_dual_update_step:
 
                         if hasattr(self, 'importance_accumulator') and self.importance_accumulator:
@@ -1135,4 +1175,77 @@ class ADMMTrainer(Trainer):
             return loss, logits
         else:
             return loss
+
+    def calculate_adaptive_sparsity(
+        self, 
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        target_sparsity: float,
+        num_layers: int
+    ) -> Tuple[Dict[int, float], Dict[int, float]]:
+        """
+        Calculates per-parameter sparsity based on sensitivity scores (gradient * |weight|).
+        
+        Returns:
+            A tuple containing:
+            - A dictionary mapping parameter ID to its allocated sparsity.
+            - A dictionary mapping block index to its allocated sparsity.
+        """
+        # ... (code for block_scores calculation is unchanged) ...
+        param_sensitivities = {}
+        block_scores = {i: {'score': 0.0, 'num_params': 0} for i in range(num_layers)}
+
+        admm_group = next((g for g in optimizer.param_groups if g.get('admm')), None)
+        if not admm_group:
+            return {}, {}
+
+        # 1. Calculate sensitivity per parameter and aggregate by block
+        for p in admm_group['params']:
+            if p.grad is not None:
+                try:
+                    param_name = next(name for name, param in model.named_parameters() if param is p)
+                    match = re.search(r'\d+', param_name)
+                    if not match:
+                        continue
+                    layer_idx = int(match.group(0))
+                except StopIteration:
+                    continue
+
+                if layer_idx in block_scores:
+                    score = (p.grad.detach() * p.data.detach()).abs().mean()
+                    block_scores[layer_idx]['score'] += score
+                    block_scores[layer_idx]['num_params'] += 1
+
+        # 2. Calculate average sensitivity score per block
+        avg_block_scores = {i: data['score'] / data['num_params'] if data['num_params'] > 0 else 0
+                            for i, data in block_scores.items()}
+        
+        scores_tensor = torch.tensor(list(avg_block_scores.values()), device='cpu')
+        
+        # 3. Allocate sparsity inversely proportional to sensitivity
+        inverted_scores = 1.0 / (scores_tensor + 1e-12)
+        normalized_scores = inverted_scores / inverted_scores.sum()
+        block_sparsities_tensor = target_sparsity * len(scores_tensor) * normalized_scores
+        
+        # Create a dictionary for block sparsities for logging
+        block_sparsity_map = {i: block_sparsities_tensor[i].item() for i in range(len(block_sparsities_tensor))}
+
+        # 4. Create a dictionary mapping parameter ID to its allocated sparsity
+        param_sparsity_map = {}
+        for p in admm_group['params']:
+            try:
+                param_name = next(name for name, param in model.named_parameters() if param is p)
+                match = re.search(r'\d+', param_name)
+                if not match:
+                    param_sparsity_map[id(p)] = target_sparsity
+                    continue
+                
+                layer_idx = int(match.group(0))
+                sparsity = block_sparsity_map.get(layer_idx, target_sparsity)
+                # Clip sparsity value to be within the [0, 1) range
+                param_sparsity_map[id(p)] = max(0.0, min(sparsity, 0.99))
+            except (StopIteration, IndexError):
+                param_sparsity_map[id(p)] = target_sparsity # Use default if mapping fails
+
+        return param_sparsity_map, block_sparsity_map
 

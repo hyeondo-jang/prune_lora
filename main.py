@@ -98,7 +98,7 @@ def main(argv):
 
         # sparsity sanity check
         logging.info("*"*30)
-        sparsity_ratio = check_sparsity(model)
+        sparsity_ratio = check_sparsity(model,log_by_block=True)
         logging.info(f"sparsity sanity check {sparsity_ratio:.4f}")
         logging.info("*"*30)
         
@@ -167,6 +167,7 @@ if __name__ == '__main__':
     
 
     # Training Loop Config
+    flags.DEFINE_bool('admm_adaptive_sparsity', False, 'Whether to use adaptive sparsity based on sensitivity scores in ADMM.')
     flags.DEFINE_integer('admm_epochs', 1, 'Number of epochs for ADMM training.')
     flags.DEFINE_integer('admm_steps', 10, 'Max steps for ADMM training. Overrides admm_epochs if > 0.')
     flags.DEFINE_integer('admm_batch_size', 2, 'Batch size for ADMM training.')

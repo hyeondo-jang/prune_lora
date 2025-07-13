@@ -65,25 +65,25 @@ def projection(
                     thresh = torch.sort(z_metric.flatten().cuda())[0][int(new_z.numel()*sparsity)].cpu()                
                     z_mask = (z_metric<=thresh)
                 elif comparison_group == 'column':
-                    num_rows_to_prune_per_col = int(new_z.shape[1]*sparsity)
+                    num_rows_to_prune_per_col = int(new_z.shape[0]*sparsity)
                     if num_rows_to_prune_per_col > 0:
                         _, indices_to_prune = torch.topk(
                             z_metric,
                             k=num_rows_to_prune_per_col,
-                            dim=1,
-                            largest=False
-                        )
-                    z_mask.scatter_(1,indices_to_prune, True)
-                elif comparison_group == 'row':
-                    num_cols_to_prune_per_row = int(new_z.shape[0]*sparsity)
-                    if num_cols_to_prune_per_row > 0:
-                        _, indices_to_prune = torch.topk(
-                            z_metric,
-                            k=num_cols_to_prune_per_row,
                             dim=0,
                             largest=False
                         )
                     z_mask.scatter_(0,indices_to_prune, True)
+                elif comparison_group == 'row':
+                    num_cols_to_prune_per_row = int(new_z.shape[1]*sparsity)
+                    if num_cols_to_prune_per_row > 0:
+                        _, indices_to_prune = torch.topk(
+                            z_metric,
+                            k=num_cols_to_prune_per_row,
+                            dim=1,
+                            largest=False
+                        )
+                    z_mask.scatter_(1,indices_to_prune, True)
             new_z[z_mask] = 0
             new_zs.append(new_z)
     else: # Standard projection, SAFE
@@ -227,25 +227,28 @@ def get_model_rotary_emb(model):
     else:
         return None
 
-def check_sparsity(model):
+def check_sparsity(model, log_by_block: bool = False):
     """
-    Calculates the sparsity (ratio of zero parameters) of the entire model or specific layers.
+    Calculates the sparsity (ratio of zero parameters) of the model's linear layers.
 
     Args:
         model (nn.Module): The model object to check sparsity for.
+        log_by_block (bool): If True, logs the sparsity for each transformer block.
 
     Returns:
-        float: The overall sparsity ratio of the model (0.0 to 1.0).
+        float: The overall sparsity ratio of the linear layers in the model (0.0 to 1.0).
     """
     use_cache = model.config.use_cache
     model.config.use_cache = False
 
-    # --- Use helper function ---
     layers = get_model_layers(model)
-    # --- End Use helper function ---
 
     count = 0
     total_params = 0
+    
+    if log_by_block:
+        logging.info("Checking sparsity per block...")
+
     for i in range(len(layers)):
         layer = layers[i]
         subset = find_layers(layer) # Find linear layers within the layer
@@ -256,19 +259,27 @@ def check_sparsity(model):
             # Check if the layer has a weight parameter
             if hasattr(subset[name], 'weight') and subset[name].weight is not None:
                 W = subset[name].weight.data
-                count += (W==0).sum().item()
-                total_params += W.numel()
+                
+                zeros = (W == 0).sum().item()
+                total = W.numel()
 
-                sub_count += (W==0).sum().item()
-                sub_params += W.numel()
-            # else:
-            #     logging.debug(f"Layer {i} - {name} has no weight parameter.")
+                count += zeros
+                total_params += total
+                
+                sub_count += zeros
+                sub_params += total
 
-        # layer_sparsity = float(sub_count)/sub_params if sub_params > 0 else 0.0
-        # logging.debug(f"Layer {i} sparsity {layer_sparsity:.6f}") # Use debug level
+        if log_by_block:
+            layer_sparsity = float(sub_count) / sub_params if sub_params > 0 else 0.0
+            logging.info(f"  - Block {i:02d} sparsity: {layer_sparsity:.4f}")
 
     model.config.use_cache = use_cache
-    return float(count)/total_params if total_params > 0 else 0.0
+    overall_sparsity = float(count) / total_params if total_params > 0 else 0.0
+    
+    if log_by_block:
+        logging.info(f"Overall linear layer sparsity: {overall_sparsity:.4f}")
+        
+    return overall_sparsity
 
 def prepare_calibration_input(
     model:AutoModelForCausalLM,

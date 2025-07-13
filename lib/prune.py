@@ -676,6 +676,7 @@ class AdmmTrainingArguments(TrainingArguments):
     prune_n: int = field(default=0, metadata={"help": "N for N:M sparsity."})
     prune_m: int = field(default=0, metadata={"help": "M for N:M sparsity."})
     sparsity_ratio: float = field(default=0.0, metadata={"help": "Target sparsity ratio (for reference)."})
+    admm_adaptive_sparsity: bool = field(default=False, metadata={"help": "Use adaptive sparsity(based on sensitivity score) in ADMM."})
     admm_peak_sparsity_step: float = field(default=1.0, metadata={"help": "Step at which peak sparsity is reached (for sparsity scheduling)."})
     base_optimizer_type: str = field(default='adam', metadata={"help": "Base optimizer for ADMM primal update."})
     blockwise_projection: bool = field(default=False, metadata={"help": "Use blockwise projection in ADMM."})
@@ -734,6 +735,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         admm_initial_lmda=FLAGS.admm_initial_lmda,
         admm_lmda_schedule_mode=FLAGS.admm_lmda_schedule_mode,
         sparsity_ratio=FLAGS.sparsity_ratio,
+        admm_adaptive_sparsity=FLAGS.admm_adaptive_sparsity,
         admm_peak_sparsity_step=FLAGS.admm_peak_sparsity_step,
         admm_sparsity_schedule_mode=FLAGS.admm_sparsity_schedule_mode,
         admm_interval=FLAGS.admm_interval,
