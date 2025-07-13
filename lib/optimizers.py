@@ -16,6 +16,7 @@ class ADMM(torch.optim.Optimizer):
         importance_matrix: list[torch.Tensor] = None,
         comparison_group: str = 'layer',
         projection_mode: str = 'identity',
+        importance_ema: float = 0.0,
         **kwargs
     ):
         """
@@ -38,6 +39,7 @@ class ADMM(torch.optim.Optimizer):
             importance_matrix (list[torch.Tensor], optional): Importance matrix used for generalized projection. Must have the same structure as param_groups with admm=True.
             comparison_group (str): Comparison group for ADMM projection ('layer', 'column', 'row').
             projection_mode (str): Mode for the projection function. Default is 'identity (P=I)'. We currently support 'gradient' (P = diag(nabla L nabla L^T)) and 'activation' (P = diag(A^TA)). Note that 'activation' needs importance_matrix to be provided.
+            importance_ema (float): Exponential moving average coefficient for importance matrix. Default is 0.0 (no EMA).
             **kwargs: Additional arguments for the base optimizer.
         """
         if not callable(projection_fn):
@@ -81,6 +83,7 @@ class ADMM(torch.optim.Optimizer):
         self.projection_mode = projection_mode.lower()
         if self.projection_mode not in ['identity', 'gradient', 'activation']:
             raise ValueError(f"projection_mode must be one of 'identity', 'gradient', 'activation'. Got {self.projection_mode}.")
+        self.importance_ema = importance_ema
         self.sparsity = sparsity
         self.interval = interval
         self.current_step = 0
@@ -90,7 +93,14 @@ class ADMM(torch.optim.Optimizer):
     def update_importance_matrix(self, importance_matrix):
         if len(importance_matrix) != len(self.param_groups[0]['params']):
             raise ValueError("importance_matrix must have the same length as params in the first ADMM(weight) group.")
-        self.importance_matrix = importance_matrix
+        if self.importance_ema > 0:
+            if not self.importance_matrix:
+                self.importance_matrix = [v.clone().detach() for v in importance_matrix]
+            else:
+                for i in range(len(self.importance_matrix)):
+                    self.importance_matrix[i] = self.importance_ema * self.importance_matrix[i] + (1 - self.importance_ema) * importance_matrix[i].clone().detach()
+        else:
+            self.importance_matrix = importance_matrix
 
     def final_projection(self):
         for group in self.param_groups:
@@ -140,17 +150,25 @@ class ADMM(torch.optim.Optimizer):
                         if not (len(weights) == len(duals) == len(splits)):
                             print(f"Warning: Mismatch in lengths of weights, duals, splits for an ADMM group. Skipping dual/split update.")
                             continue
-
                         for i in range(len(duals)):
                             z_input_i = weights[i].detach() + duals[i].detach()
-                            importance_matrix = self.importance_matrix
-                            if self.projection_mode == 'gradient': ## on the fly update for gradient projection (memory efficient)
-                                proximal = lmda * (weights[i].detach() - splits[i].detach() + duals[i].detach()) # proximal gradient w-z+u
-                                grad_input_i = weights[i].grad.detach() - proximal 
-                                importance_matrix = grad_input_i.pow(2)
+                            if self.projection_mode == 'gradient':
+                                proximal = lmda * (weights[i].detach() - splits[i].detach() + duals[i].detach())
+                                grad_input_i = weights[i].grad.detach() - proximal
+                                current_importance = torch.pow(grad_input_i, 2)
+                                if self.importance_ema <= 0:
+                                    importance_matrix = current_importance
+                                # EMA
+                                else:
+                                    if not self.importance_matrix:
+                                        self.importance_matrix = [torch.zeros_like(p) for p in weights]
+                                    beta = self.importance_ema
+                                    self.importance_matrix[i].mul_(beta).add_(current_importance, alpha=1 - beta)
+                                    importance_matrix = self.importance_matrix[i]
                             elif self.projection_mode == 'activation':
                                 if self.importance_matrix is not None and i<len(self.importance_matrix):
                                     importance_matrix = self.importance_matrix[i].unsqueeze(0).to(z_input_i.device) # (c_in)->(1,c_in). will be broadcasted in projection (diag(A^tA))
+
                             z_new_i = self.projection(
                                 [z_input_i],
                                 sparsity,

@@ -226,6 +226,7 @@ class ADMMTrainer(Trainer):
                     lmda=self.args.admm_lmda, sparsity=self.args.sparsity_ratio, interval=self.args.admm_interval, 
                     lr=self.args.learning_rate, prune_n=self.args.prune_n, prune_m=self.args.prune_m, comparison_group=self.args.admm_projection_comparison_group,
                     projection_mode= self.args.admm_projection_mode,
+                    importance_ema=self.args.admm_importance_ema,
                     base_optimizer = base_optimizer,
                     **base_optimizer_kwargs,
                 )
