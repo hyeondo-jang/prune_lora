@@ -201,6 +201,8 @@ class ADMMTrainer(Trainer):
         
             if self.args.base_optimizer_type == 'adam':
                 base_optimizer = torch.optim.Adam
+            elif self.args.base_optimizer_type == 'sgd':
+                base_optimizer = torch.optim.SGD
             else:
                 NotImplementedError(f"Base optimizer type '{self.args.base_optimizer_type}' is not implemented. Supported: 'adam'.")
             # Prepare kwargs for ADMM
