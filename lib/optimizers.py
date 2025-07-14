@@ -141,7 +141,7 @@ class ADMM(torch.optim.Optimizer):
                         p_sparsity,
                         prune_n=self.prune_n,
                         prune_m=self.prune_m,
-                        importance_matrix=self.importance_matrix[i],
+                        importance_matrix=self.importance_matrix[i] if self.importance_matrix is not None else None,
                         comparison_group=self.comparison_group
                     )[0]
                     w.data.copy_(final_weight)
