@@ -134,17 +134,17 @@ class ADMM(torch.optim.Optimizer):
             if group.get('admm', False):
                 weights = group['params']
                 for i in range(len(weights)):
-                    w = weights[i]
+                    w = weights[i].detach()
                     p_sparsity = self.state[w].get('sparsity', 0.5) # 기본값 제공
                     final_weight=self.projection(
-                        w,
+                        [w],
                         p_sparsity,
                         prune_n=self.prune_n,
                         prune_m=self.prune_m,
                         importance_matrix=self.importance_matrix[i] if self.importance_matrix is not None else None,
                         comparison_group=self.comparison_group
                     )[0]
-                    w.data.copy_(final_weight)
+                    weights[i].data.copy_(final_weight)
 
     @torch.no_grad()
     def step(self, zero_grad=False):
