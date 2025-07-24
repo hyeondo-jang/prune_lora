@@ -936,9 +936,9 @@ class ADMMTrainer(Trainer):
                             else:# default gradient clipping
                                 nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
-                    ## activation generalized projection. reduce on micro-batch, update importance matrix
                     is_dual_update_step = (self.optimizer.current_step + 1) % self.optimizer.interval == 0
-                    
+
+                    ## activation generalized projection. reduce on micro-batch, update importance matrix
                     if self.args.admm_projection_mode == 'activation' and is_dual_update_step:
 
                         if hasattr(self, 'importance_accumulator') and self.importance_accumulator:
@@ -955,7 +955,7 @@ class ADMMTrainer(Trainer):
                                 del vectors_on_device
                             del self.importance_accumulator
                             torch.cuda.empty_cache()
-
+                        
                     optimizer_was_run = True
                     if self.deepspeed: pass
                     elif getattr(self, 'do_grad_scaling', False):
@@ -969,7 +969,14 @@ class ADMMTrainer(Trainer):
                         else:
                             self.optimizer.step()
 
-                    if optimizer_was_run and not self.deepspeed: 
+                    if is_dual_update_step:
+                        mask_diff = self.optimizer.get_mask_diff()
+                        if self.is_world_process_zero():
+                            logger.info(f'ADMM Step {self.state.global_step}: Mask difference: {mask_diff:.4f}')
+                            wandb_metrics = {'ADMM_mask_difference': mask_diff}  
+                            self.log(wandb_metrics)
+
+                    if optimizer_was_run and not self.deepspeed:
                         self.lr_scheduler.step()
                         self.sparsity_scheduler.step()
                         self.penalty_scheduler.step()

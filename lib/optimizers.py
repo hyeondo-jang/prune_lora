@@ -72,6 +72,7 @@ class ADMM(torch.optim.Optimizer):
         self.current_step = 0
         self.prune_n = prune_n
         self.prune_m = prune_m
+        self.mask_diff = 0.0
         # Now, iterate through self.param_groups to set up ADMM-specific state and variables.
         for i, group in enumerate(self.param_groups):
             if group.get('admm', False):
@@ -104,6 +105,12 @@ class ADMM(torch.optim.Optimizer):
             base_param_groups.append(base_pg)
         self.base_optimizer = base_optimizer(base_param_groups, **kwargs)
 
+    def get_mask_diff(self):
+        """
+        Returns the mask difference calculated during the last step.
+        This is the number of parameters that changed their mask in the last ADMM dual update step.
+        """
+        return self.mask_diff
 
     def update_importance_matrix(self, importance_matrix):
         if len(importance_matrix) != len(self.param_groups[0]['params']):
@@ -161,6 +168,7 @@ class ADMM(torch.optim.Optimizer):
         
         # dual update
         if (self.current_step + 1) % self.interval == 0:
+            self.mask_diff = 0.0 ## z difference
             with torch.no_grad():
                 for group in self.param_groups:
                     if group.get('admm', False):
@@ -200,6 +208,7 @@ class ADMM(torch.optim.Optimizer):
                             else:
                                 p_sparsity = self.sparsity
 
+                            # dual update
                             z_new_i = self.projection(
                                 [z_input_i],
                                 p_sparsity,
@@ -208,11 +217,17 @@ class ADMM(torch.optim.Optimizer):
                                 importance_matrix=importance_matrix_i,
                                 comparison_group=self.comparison_group
                             )[0]
-
                             u_new_i = duals[i].detach() + self.alpha * (weights[i].detach() - z_new_i) # U_t+1 = U_t + \alpha(W_t+1 - Z_t+1)
+                            
+                            # mask difference
+                            old_mask = (splits[i] == 0).detach().cpu()
+                            new_mask = (z_new_i == 0).detach().cpu()
+                            self.mask_diff += (torch.sum(old_mask != new_mask).item() / splits[i].numel())
 
+                            #update
                             duals[i].copy_(u_new_i)
                             splits[i].copy_(z_new_i)
+                        self.mask_diff /= len(duals)
         self.current_step += 1
 
 
