@@ -6,7 +6,7 @@ class ADMM(torch.optim.Optimizer):
         self, 
         param_groups,
         projection_fn,
-        sparsity: Union[float, Dict[int, float]], # sparsity를 float 또는 dict로 받을 수 있도록 수정
+        sparsity: float,
         interval: int,
         base_optimizer: torch.optim.Optimizer = torch.optim.SGD,
         alpha: float = 1.0,
@@ -18,6 +18,7 @@ class ADMM(torch.optim.Optimizer):
         comparison_group: str = 'layer',
         projection_mode: str = 'identity',
         importance_ema: float = 0.0,
+        param_sparsity_map: Dict[int, float] = None, 
         **kwargs
     ):
         """
@@ -41,6 +42,7 @@ class ADMM(torch.optim.Optimizer):
             comparison_group (str): Comparison group for ADMM projection ('layer', 'column', 'row').
             projection_mode (str): Mode for the projection function. Default is 'identity (P=I)'. We currently support 'gradient' (P = diag(nabla L nabla L^T)) and 'activation' (P = diag(A^TA)). Note that 'activation' needs importance_matrix to be provided.
             importance_ema (float): Exponential moving average coefficient for importance matrix. Default is 0.0 (no EMA).
+            param_sparsity_map (Dict[int, float]): Optional dictionary mapping parameter IDs to their sparsity values. If provided, this will override the global sparsity value for each parameter.
             **kwargs: Additional arguments for the base optimizer.
         """
         if not callable(projection_fn):
@@ -55,7 +57,21 @@ class ADMM(torch.optim.Optimizer):
         self.comparison_group = comparison_group.lower()
         if self.comparison_group not in ['layer', 'column', 'row']:
             raise ValueError(f"comparison_group must be one of 'layer', 'column', 'row'. Got {self.comparison_group}.")
-
+        ## other control variables
+        self.alpha = alpha
+        if not (0 <= self.alpha <= 2):
+            raise ValueError(f"alpha must be in the range [0, 2]. Got {self.alpha}.")
+        self.importance_matrix = importance_matrix if importance_matrix is not None else None
+        self.projection_mode = projection_mode.lower()
+        if self.projection_mode not in ['identity', 'gradient', 'activation']:
+            raise ValueError(f"projection_mode must be one of 'identity', 'gradient', 'activation'. Got {self.projection_mode}.")
+        self.importance_ema = importance_ema
+        self.sparsity = sparsity
+        self.param_sparsity_map = param_sparsity_map if param_sparsity_map is not None else None
+        self.interval = interval
+        self.current_step = 0
+        self.prune_n = prune_n
+        self.prune_m = prune_m
         # Now, iterate through self.param_groups to set up ADMM-specific state and variables.
         for i, group in enumerate(self.param_groups):
             if group.get('admm', False):
@@ -64,12 +80,6 @@ class ADMM(torch.optim.Optimizer):
                     continue
                 
                 admm_params_list = group['params']
-
-                # Initialize per-parameter sparsity in the optimizer's state
-                for p in admm_params_list:
-                    # self.state[p] is now a valid defaultdict
-                    self.state[p]['sparsity'] = sparsity if isinstance(sparsity, float) else sparsity.get(id(p), 0.5)
-
                 group['duals'] = [torch.zeros_like(p, device=p.device) for p in admm_params_list]
                 if importance_matrix is not None:
                     if len(importance_matrix) != len(admm_params_list):
@@ -79,7 +89,7 @@ class ADMM(torch.optim.Optimizer):
                 splits_list = []
                 for p in admm_params_list:
                     # Now this line is safe to call
-                    p_sparsity = self.state[p]['sparsity']
+                    p_sparsity = self.param_sparsity_map.get(id(p)) if self.param_sparsity_map is not None else self.sparsity
                     splits_list.append(self.projection([p], p_sparsity, prune_n, prune_m, importance_matrix, comparison_group=self.comparison_group)[0])
                 group['splits'] = splits_list
 
@@ -94,20 +104,6 @@ class ADMM(torch.optim.Optimizer):
             base_param_groups.append(base_pg)
         self.base_optimizer = base_optimizer(base_param_groups, **kwargs)
 
-        ## other control variables
-        self.alpha = alpha
-        if not (0 <= self.alpha <= 2):
-            raise ValueError(f"alpha must be in the range [0, 2]. Got {self.alpha}.")
-        self.importance_matrix = importance_matrix if importance_matrix is not None else None
-        self.projection_mode = projection_mode.lower()
-        if self.projection_mode not in ['identity', 'gradient', 'activation']:
-            raise ValueError(f"projection_mode must be one of 'identity', 'gradient', 'activation'. Got {self.projection_mode}.")
-        self.importance_ema = importance_ema
-        # self.sparsity는 이제 사용되지 않음. self.state[p]['sparsity']를 사용.
-        self.interval = interval
-        self.current_step = 0
-        self.prune_n = prune_n
-        self.prune_m = prune_m
 
     def update_importance_matrix(self, importance_matrix):
         if len(importance_matrix) != len(self.param_groups[0]['params']):
@@ -123,11 +119,13 @@ class ADMM(torch.optim.Optimizer):
 
     def update_sparsity(self, sparsity_map: Dict[int, float]):
         """Updates the sparsity for each parameter from a dictionary."""
+        if self.param_sparsity_map is None:
+            self.param_sparsity_map = {}
         for group in self.param_groups:
             if group.get('admm', False):
                 for p in group['params']:
                     if id(p) in sparsity_map:
-                        self.state[p]['sparsity'] = sparsity_map[id(p)]
+                        self.param_sparsity_map[id(p)] = sparsity_map[id(p)]
 
     def final_projection(self):
         for group in self.param_groups:
@@ -135,7 +133,7 @@ class ADMM(torch.optim.Optimizer):
                 weights = group['params']
                 for i in range(len(weights)):
                     w = weights[i].detach()
-                    p_sparsity = self.state[w].get('sparsity', 0.5) # 기본값 제공
+                    p_sparsity = self.param_sparsity_map.get(id(w),self.sparsity) if self.param_sparsity_map is not None else self.sparsity
                     final_weight=self.projection(
                         [w],
                         p_sparsity,
@@ -197,8 +195,10 @@ class ADMM(torch.optim.Optimizer):
                                 if self.importance_matrix is not None and i<len(self.importance_matrix):
                                     importance_matrix_i = self.importance_matrix[i].unsqueeze(0).to(z_input_i.device)
 
-                            # 파라미터별 sparsity를 state에서 가져와 사용
-                            p_sparsity = self.state[weights[i]].get('sparsity', 0.5)
+                            if self.param_sparsity_map is not None:
+                                p_sparsity = self.param_sparsity_map.get(id(weights[i]), self.sparsity)
+                            else:
+                                p_sparsity = self.sparsity
 
                             z_new_i = self.projection(
                                 [z_input_i],
