@@ -235,7 +235,8 @@ class ADMMTrainer(Trainer):
                     sorted_blocks = sorted(block_sparsity_map.items())
                     for layer_idx, sparsity in sorted_blocks:
                         logger.info(f"  - Block {layer_idx:02d} allocated sparsity: {sparsity:.4f}")
-
+                    wandb_metrics = {f"adaptive_sparsity/block_{idx:02d}": sparsity for idx, sparsity in block_sparsity_map.items()}
+                    self.log(wandb_metrics)
                 # 4. Zero out the gradients from the dry run
                 self.model.zero_grad(set_to_none=True)
                 torch.cuda.empty_cache() 
