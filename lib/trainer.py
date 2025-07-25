@@ -893,11 +893,11 @@ class ADMMTrainer(Trainer):
                         @torch.no_grad()
                         def hook(module, inp, out)->None:
                             act_tensor = inp[0] if isinstance(inp, tuple) else inp
-                            mean_act_tensor = torch.mean(act_tensor, dim=0)
-                            norm_vec = torch.norm(mean_act_tensor, p=2, dim=0).pow(2).cpu()
-                            if param_id not in accumulator_dict: accumulator_dict[param_id] = norm_vec
-                            else: accumulator_dict[param_id].add_(norm_vec)
-                            del act_tensor, mean_act_tensor, norm_vec
+                            flat_act = act_tensor.reshape(-1,act_tensor.shape[-1])
+                            diag = (flat_act **2).sum(dim=0).cpu()
+                            if param_id not in accumulator_dict: accumulator_dict[param_id] = diag
+                            else: accumulator_dict[param_id].add_(diag)
+                            del act_tensor, flat_act, diag
                         return hook
                     
                     for module in model.modules():
