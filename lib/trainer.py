@@ -4,6 +4,7 @@ import os
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union, Callable
 from absl import logging
+import wandb
 
 # PyTorch 관련
 import torch
@@ -1290,6 +1291,6 @@ class ADMMTrainer(Trainer):
             param_sparsity_map[id(param)] = min(0.99, max(0.0, sparsity))
 
         torch.cuda.empty_cache()
-        return param_sparsity_map, block_sparsity_map, scores_tensor
+        return param_sparsity_map, block_sparsity_map, avg_block_scores
 
 
