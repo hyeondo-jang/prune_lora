@@ -224,7 +224,7 @@ class ADMMTrainer(Trainer):
 
                 self.training_step(self.model, first_batch)
 
-                param_sparsity_map, block_sparsity_map, scores_tensor = self.calculate_adaptive_sparsity(
+                param_sparsity_map, block_sparsity_map, avg_block_scores = self.calculate_adaptive_sparsity(
                     model=unwrap_model(self.model),
                     target_sparsity=self.args.sparsity_ratio,
                     num_layers=self.model.config.num_hidden_layers,
