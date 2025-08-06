@@ -245,21 +245,22 @@ class ADMMTrainer(Trainer):
                         logger.info(f"  - Block {layer_idx:02d} allocated sparsity: {sparsity:.4f}, score: {score:.4e}")
                         sparsity_table.add_data(f"Block {layer_idx:02d}", sparsity, score)
                     
-                    # 3. Log the table with a custom bar chart
-                    self.log({
-                        "adaptive_sparsity_chart": wandb.plot.bar(
-                            sparsity_table, 
-                            "Block Index", 
-                            "Allocated Sparsity",
-                            title="Allocated Sparsity per Block"
-                        ),
-                        "adaptive_score_chart": wandb.plot.bar(
-                            sparsity_table,
-                            "Block Index",
-                            "Average Score",
-                            title="Average Sensitivity Score per Block"
-                        )
-                    })
+                    # 3. Log the table with a custom bar chart by calling wandb.log() directly
+                    if self.is_world_process_zero():
+                        wandb.log({
+                            "adaptive_sparsity_chart": wandb.plot.bar(
+                                sparsity_table, 
+                                "Block Index", 
+                                "Allocated Sparsity",
+                                title="Allocated Sparsity per Block"
+                            ),
+                            "adaptive_score_chart": wandb.plot.bar(
+                                sparsity_table,
+                                "Block Index",
+                                "Average Score",
+                                title="Average Sensitivity Score per Block"
+                            )
+                        }, step=self.state.global_step)
                     # --- End W&B Table Logging ---
 
                     # Keep individual logging for simple tracking if needed
