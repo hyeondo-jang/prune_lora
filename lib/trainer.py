@@ -223,7 +223,7 @@ class ADMMTrainer(Trainer):
 
                 self.training_step(self.model, first_batch)
 
-                param_sparsity_map, block_sparsity_map = self.calculate_adaptive_sparsity(
+                param_sparsity_map, block_sparsity_map, scores_tensor = self.calculate_adaptive_sparsity(
                     model=unwrap_model(self.model),
                     target_sparsity=self.args.sparsity_ratio,
                     num_layers=self.model.config.num_hidden_layers,
@@ -233,8 +233,35 @@ class ADMMTrainer(Trainer):
                     logger.info("Fixed adaptive sparsities for training.")
                     # Log the allocated sparsity for each block directly from the returned map
                     sorted_blocks = sorted(block_sparsity_map.items())
+                    
+                    # --- W&B Table Logging ---
+                    # 1. Create a wandb.Table
+                    sparsity_table = wandb.Table(columns=["Block Index", "Allocated Sparsity", "Average Score"])
+                    
+                    # 2. Populate the table
                     for layer_idx, sparsity in sorted_blocks:
-                        logger.info(f"  - Block {layer_idx:02d} allocated sparsity: {sparsity:.4f}")
+                        score = avg_block_scores.get(layer_idx, 0.0)
+                        logger.info(f"  - Block {layer_idx:02d} allocated sparsity: {sparsity:.4f}, score: {score:.4e}")
+                        sparsity_table.add_data(f"Block {layer_idx:02d}", sparsity, score)
+                    
+                    # 3. Log the table with a custom bar chart
+                    self.log({
+                        "adaptive_sparsity_chart": wandb.plot.bar(
+                            sparsity_table, 
+                            "Block Index", 
+                            "Allocated Sparsity",
+                            title="Allocated Sparsity per Block"
+                        ),
+                        "adaptive_score_chart": wandb.plot.bar(
+                            sparsity_table,
+                            "Block Index",
+                            "Average Score",
+                            title="Average Sensitivity Score per Block"
+                        )
+                    })
+                    # --- End W&B Table Logging ---
+
+                    # Keep individual logging for simple tracking if needed
                     wandb_metrics = {f"adaptive_sparsity/block_{idx:02d}": sparsity for idx, sparsity in block_sparsity_map.items()}
                     self.log(wandb_metrics)
                 # 4. Zero out the gradients from the dry run
@@ -1205,7 +1232,10 @@ class ADMMTrainer(Trainer):
         param_sparsity_map = {}
         block_scores = {i: {'score': 0.0, 'num_params': 0} for i in range(num_layers)}
         
-        # Step 1: Accumulate per-layer scores
+        # Step 1: Accumulate per-layer scores and log gradient distributions
+        if self.is_world_process_zero():
+            logger.info("--- Gradient Distribution Analysis ---")
+
         for name, param in model.named_parameters():
             if not param.requires_grad or param.grad is None:
                 continue
@@ -1220,7 +1250,8 @@ class ADMMTrainer(Trainer):
             if layer_idx not in block_scores:
                 continue
 
-            sensitivity = (param.grad.detach().cpu() * param.data.detach().cpu()).abs().mean()
+            grad_data = param.grad.detach().cpu().abs()
+            sensitivity = (grad_data * param.data.detach().cpu().abs()).mean()
             block_scores[layer_idx]['score'] += sensitivity
             block_scores[layer_idx]['num_params'] += 1
 
@@ -1229,7 +1260,6 @@ class ADMMTrainer(Trainer):
             i: data['score'] / data['num_params'] if data['num_params'] > 0 else 0.0
             for i, data in block_scores.items()
         }
-
         scores_tensor = torch.tensor(list(avg_block_scores.values()), device='cpu')
         
         # Step 3: Inverse-score based sparsity allocation
@@ -1238,7 +1268,11 @@ class ADMMTrainer(Trainer):
         block_sparsities_tensor = target_sparsity * len(scores_tensor) * normalized_scores
         block_sparsity_map = {i: min(0.99, max(0.0, block_sparsities_tensor[i].item()))
                             for i in range(len(block_sparsities_tensor))}
-        
+        if self.is_world_process_zero():
+            logger.info("--- Average Block Sensitivity Scores ---")
+            for i, score in avg_block_scores.items():
+                logger.info(f"Layer {i:02d}: Avg Score = {score:.4e}")
+            logger.info("--- End Average Block Sensitivity Scores ---")
         # Step 4: Assign sparsity to each parameter
         for name, param in model.named_parameters():
             if not param.requires_grad or param.grad is None:
@@ -1256,6 +1290,6 @@ class ADMMTrainer(Trainer):
             param_sparsity_map[id(param)] = min(0.99, max(0.0, sparsity))
 
         torch.cuda.empty_cache()
-        return param_sparsity_map, block_sparsity_map
+        return param_sparsity_map, block_sparsity_map, scores_tensor
 
 
