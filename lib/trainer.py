@@ -5,6 +5,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple, Union, Callable
 from absl import logging
 import wandb
+from tqdm import tqdm
 
 # PyTorch 관련
 import torch
@@ -222,6 +223,7 @@ class ADMMTrainer(Trainer):
                 
                 # Get train dataloader and calculate gradients on multiple batches
                 train_dataloader = self.get_train_dataloader()
+                train_dataloader_iterator = iter(train_dataloader)
                 samples_processed = 0
                 batch_size = self.args.per_device_train_batch_size
                 
@@ -229,15 +231,11 @@ class ADMMTrainer(Trainer):
                 
                 # Process multiple batches to accumulate gradients
                 batches_processed = 0
-                for batch_idx, batch in enumerate(train_dataloader):
-                    if samples_processed >= self.args.admm_adaptive_sparsity_samples:
-                        break
+                for _ in tqdm(range(num_batches_needed), desc="Calculating SNIP Scores for adaptive sparsity"):
+                    batch = next(train_dataloader_iterator)
                     self.training_step(self.model, batch)
                     samples_processed += batch_size
                     batches_processed += 1
-                    
-                    if self.is_world_process_zero():
-                        logger.info(f'Processed batch {batch_idx + 1}/{num_batches_needed} ({samples_processed}/{self.args.admm_adaptive_sparsity_samples} samples)')
 
                 param_sparsity_map, block_sparsity_map, avg_block_scores = self.calculate_adaptive_sparsity(
                     model=unwrap_model(self.model),
@@ -1293,9 +1291,9 @@ class ADMMTrainer(Trainer):
             # Average the accumulated gradients by number of batches
             if num_batches > 1:
                 grad_data = grad_data / num_batches
-            sensitivity = (grad_data * param.data.detach().cpu().abs()).mean()
+            sensitivity = (grad_data * param.data.detach().cpu().abs()).sum()
             block_scores[layer_idx]['score'] += sensitivity
-            block_scores[layer_idx]['num_params'] += 1
+            block_scores[layer_idx]['num_params'] += param.numel()
 
         # Step 2: Average block sensitivity
         avg_block_scores = {
