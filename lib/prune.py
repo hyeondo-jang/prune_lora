@@ -663,7 +663,8 @@ class AdmmTrainingArguments(TrainingArguments):
     # Add ADMM specific arguments that ADMMTrainer might need access to via the args object.
     # Standard TrainingArguments already cover most needs (lr, epochs, batch_size, etc.)
     # These might be redundant if ADMMTrainer reads them directly from FLAGS, but including
-    # them here follows the pattern of passing config through the args object.
+    # them here follows the pattern of passing config through the args object.\
+    wandb: bool = field(default=False, metadata={"help": "Use wandb for logging."})
     admm_alpha: float = field(default=1.0, metadata={"help": "Alpha parameter for ADMMM over-relaxation."})
     admm_lmda: float = field(default=0.001, metadata={"help": "Lambda (rho) penalty parameter for ADMM."})
     admm_initial_lmda: float = field(default=0.0, metadata={"help": "Initial lambda (rho) for ADMM for penalty scheduling. defaults to 0.0."})
@@ -677,6 +678,9 @@ class AdmmTrainingArguments(TrainingArguments):
     prune_m: int = field(default=0, metadata={"help": "M for N:M sparsity."})
     sparsity_ratio: float = field(default=0.0, metadata={"help": "Target sparsity ratio (for reference)."})
     admm_adaptive_sparsity: bool = field(default=False, metadata={"help": "Use adaptive sparsity(based on sensitivity score) in ADMM."})
+    admm_adaptive_sparsity_samples: int = field(default=128, metadata={"help": "Number of samples for adaptive sparsity."})
+    admm_adaptive_sparsity_smooth: bool = field(default=False, metadata={"help": "Smooth the adaptive sparsity scores in ADMM."})
+    admm_adaptive_sparsity_smooth_temperature: float = field(default=0.9, metadata={"help": "Temperature for smoothing the adaptive sparsity scores in ADMM."})
     admm_peak_sparsity_step: float = field(default=1.0, metadata={"help": "Step at which peak sparsity is reached (for sparsity scheduling)."})
     base_optimizer_type: str = field(default='adam', metadata={"help": "Base optimizer for ADMM primal update."})
     blockwise_projection: bool = field(default=False, metadata={"help": "Use blockwise projection in ADMM."})
@@ -704,6 +708,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         admm_output_dir_str = f"./admm_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     admm_training_args = AdmmTrainingArguments(
+        wandb=FLAGS.wandb,
         output_dir=admm_output_dir_str,
         num_train_epochs=FLAGS.admm_epochs,
         max_steps=FLAGS.admm_steps if FLAGS.admm_steps > 0 else -1,
@@ -730,6 +735,9 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         do_train=True,
         do_eval=True,
         # admm arguments
+        admm_adaptive_sparsity_smooth=FLAGS.admm_adaptive_sparsity_smooth,
+        admm_adaptive_sparsity_smooth_temperature=FLAGS.admm_adaptive_sparsity_smooth_temperature,
+        admm_adaptive_sparsity_samples=FLAGS.admm_adaptive_sparsity_samples,
         admm_alpha=FLAGS.admm_alpha,
         admm_lmda=FLAGS.admm_lmda,
         admm_initial_lmda=FLAGS.admm_initial_lmda,

@@ -135,11 +135,11 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    flags.DEFINE_string('model', 'google/gemma-2-2b', 'model to prune.')
+    flags.DEFINE_string('model', 'facebook/opt-125m', 'model to prune.')
     flags.DEFINE_integer('seqlen', 2048, 'Sequence length for the model.')
     flags.DEFINE_integer('seed', 0, 'Seed for sampling the calibration data.')
     flags.DEFINE_integer('nsamples', 128, 'Number of calibration samples.')
-    flags.DEFINE_float('sparsity_ratio', 0.5, 'Sparsity level')
+    flags.DEFINE_float('sparsity_ratio', 0.8, 'Sparsity level')
     flags.DEFINE_enum('sparsity_type', "unstructured", ["unstructured", "4:8", "2:4"], 'Type of sparsity.')
     flags.DEFINE_enum('prune_method', "global_admm", ["magnitude", "wanda", "sparsegpt", "safe", "alps","global_admm", 'dense'], 'Pruning method.')
     flags.DEFINE_enum('dataset', 'c4', ["c4", "wikitext2"], 'Calibration dataset.')
@@ -167,7 +167,6 @@ if __name__ == '__main__':
     
 
     # Training Loop Config
-    flags.DEFINE_bool('admm_adaptive_sparsity', False, 'Whether to use adaptive sparsity based on sensitivity scores in ADMM.')
     flags.DEFINE_integer('admm_epochs', 1, 'Number of epochs for ADMM training.')
     flags.DEFINE_integer('admm_steps', 10, 'Max steps for ADMM training. Overrides admm_epochs if > 0.')
     flags.DEFINE_integer('admm_batch_size', 2, 'Batch size for ADMM training.')
@@ -189,13 +188,18 @@ if __name__ == '__main__':
     flags.DEFINE_enum('admm_lmda_schedule_mode', 'constant', ['constant','linear','log','cosine'], 'Mode for lambda schedule (e.g., linear, cosine).')
     flags.DEFINE_enum('admm_sparsity_schedule_mode', 'constant', ['constant','linear','exponential','cosine','cubic','cubic'], 'Mode for sparsity schedule (e.g., cubic, linear).')
     flags.DEFINE_float('admm_peak_sparsity_step', 1, 'Step ratio (0-1) at which peak sparsity is reached in ADMM training. e.g. 0.3 means peak sparsity is reached at step*0.3 (used only when admm_sparsity_schedule_mode is not constant)')
-    flags.DEFINE_integer('admm_interval', 32, 'Interval for ADMM projection and dual updates.')
+    flags.DEFINE_integer('admm_interval', 2, 'Interval for ADMM projection and dual updates.')
     flags.DEFINE_enum('admm_base_optimizer', 'adam', ['adam', 'sgd'], 'Base optimizer for ADMM primal update.')
     flags.DEFINE_bool('admm_blockwise_projection', False, 'Use blockwise projection in ADMM.')
     flags.DEFINE_bool('admm_activation_aware', False, 'Use activation-aware projection in ADMM.')
     flags.DEFINE_bool('admm_decouple', False, 'Decouple proximal update in ADMM (for Adam).')
     flags.DEFINE_enum('loss_type', 'ntp', ['rem', 'ntp'], "Loss type for ADMM training ('rem' for reconstruction, 'ntp' for next token prediction).")
     flags.DEFINE_bool('normalize_grad', False, 'Whether to normalize gradients during ADMM training. Note that gradient normalization is only performed with respect to the gradients of the training objective.')
+    flags.DEFINE_bool('admm_adaptive_sparsity', True, 'Whether to use adaptive sparsity based on sensitivity scores in ADMM.')
+    flags.DEFINE_integer('admm_adaptive_sparsity_samples', 2, 'Whether to use adaptive sparsity based on sensitivity scores in ADMM.')
+    flags.DEFINE_bool('admm_adaptive_sparsity_smooth', False, 'Whether to smooth the adaptive sparsity scores in ADMM.')
+    flags.DEFINE_float('admm_adaptive_sparsity_smooth_temperature', 2, 'Alpha for smoothing the adaptive sparsity scores in ADMM.')
+    
     # Logging & Evaluation
     flags.DEFINE_integer('admm_logging_steps', 10, 'Logging step interval for ADMM training.')
     flags.DEFINE_integer('admm_eval_steps', 100, 'Evaluation step interval for ADMM training.')

@@ -18,7 +18,8 @@ class ADMM(torch.optim.Optimizer):
         comparison_group: str = 'layer',
         projection_mode: str = 'identity',
         importance_ema: float = 0.0,
-        param_sparsity_map: Dict[int, float] = None, 
+        param_sparsity_map: Dict[str, float] = None,
+        param_names: Dict[torch.nn.Parameter, str] = None,
         **kwargs
     ):
         """
@@ -68,6 +69,7 @@ class ADMM(torch.optim.Optimizer):
         self.importance_ema = importance_ema
         self.sparsity = sparsity
         self.param_sparsity_map = param_sparsity_map if param_sparsity_map is not None else None
+        self.param_names = param_names if param_names is not None else {}
         self.interval = interval
         self.current_step = 0
         self.prune_n = prune_n
@@ -89,8 +91,9 @@ class ADMM(torch.optim.Optimizer):
                 # Use per-parameter sparsity for the initial projection
                 splits_list = []
                 for p in admm_params_list:
-                    # Now this line is safe to call
-                    p_sparsity = self.param_sparsity_map.get(id(p)) if self.param_sparsity_map is not None else self.sparsity
+                    # Get parameter name for sparsity lookup
+                    param_name = self._get_param_name(p)
+                    p_sparsity = self.param_sparsity_map.get(param_name, self.sparsity) if self.param_sparsity_map is not None else self.sparsity
                     splits_list.append(self.projection([p], p_sparsity, prune_n, prune_m, importance_matrix, comparison_group=self.comparison_group)[0])
                 group['splits'] = splits_list
 
@@ -123,16 +126,18 @@ class ADMM(torch.optim.Optimizer):
                     self.importance_matrix[i] = self.importance_ema * self.importance_matrix[i] + (1 - self.importance_ema) * importance_matrix[i].clone().detach()
         else:
             self.importance_matrix = importance_matrix
+        self.param_names = param_names if param_names is not None else {}
 
-    def update_sparsity(self, sparsity_map: Dict[int, float]):
+    def update_sparsity(self, sparsity_map: Dict[str, float]):
         """Updates the sparsity for each parameter from a dictionary."""
         if self.param_sparsity_map is None:
             self.param_sparsity_map = {}
         for group in self.param_groups:
             if group.get('admm', False):
                 for p in group['params']:
-                    if id(p) in sparsity_map:
-                        self.param_sparsity_map[id(p)] = sparsity_map[id(p)]
+                    param_name = self._get_param_name(p)
+                    if param_name in sparsity_map:
+                        self.param_sparsity_map[param_name] = sparsity_map[param_name]
 
     def final_projection(self):
         for group in self.param_groups:
@@ -140,7 +145,8 @@ class ADMM(torch.optim.Optimizer):
                 weights = group['params']
                 for i in range(len(weights)):
                     w = weights[i].detach()
-                    p_sparsity = self.param_sparsity_map.get(id(w),self.sparsity) if self.param_sparsity_map is not None else self.sparsity
+                    param_name = self._get_param_name(weights[i])
+                    p_sparsity = self.param_sparsity_map.get(param_name, self.sparsity) if self.param_sparsity_map is not None else self.sparsity
                     final_weight=self.projection(
                         [w],
                         p_sparsity,
@@ -204,10 +210,10 @@ class ADMM(torch.optim.Optimizer):
                                     importance_matrix_i = self.importance_matrix[i].unsqueeze(0).to(z_input_i.device)
 
                             if self.param_sparsity_map is not None:
-                                p_sparsity = self.param_sparsity_map.get(id(weights[i]), self.sparsity)
+                                param_name = self._get_param_name(weights[i])
+                                p_sparsity = self.param_sparsity_map.get(param_name, self.sparsity)
                             else:
                                 p_sparsity = self.sparsity
-
                             # dual update
                             z_new_i = self.projection(
                                 [z_input_i],
@@ -230,6 +236,14 @@ class ADMM(torch.optim.Optimizer):
                         self.mask_diff /= len(duals)
         self.current_step += 1
 
+    def _get_param_name(self, param):
+        """Helper method to get parameter name from parameter object."""
+        # Try to find parameter name in the stored param_names mapping
+        if param in self.param_names:
+            return self.param_names[param]
+        else:
+            return None
+
 
 class SAFE(torch.optim.Optimizer):
     def __init__(self, 
@@ -246,6 +260,7 @@ class SAFE(torch.optim.Optimizer):
                 prune_m: int = 0,
                 importance_matrix: list[torch.Tensor] = None,
                 comparison_group: str = 'layer',
+                param_names: Dict[torch.nn.Parameter, str] = None,
                 **kwargs):
         """
         SAFE optimizer 
