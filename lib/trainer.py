@@ -5,7 +5,6 @@ import time
 from typing import Any, Dict, List, Optional, Tuple, Union, Callable
 from absl import logging
 import wandb
-from tqdm import tqdm
 
 # PyTorch 관련
 import torch
@@ -22,7 +21,19 @@ import re
 from transformers import Trainer, TrainingArguments
 from transformers.optimization import get_scheduler
 from transformers.modeling_utils import unwrap_model
-from transformers.trainer_callback import TrainerState
+from transformers.trainer_callback import (
+    CallbackHandler,
+    DefaultFlowCallback,
+    ExportableState,
+    PrinterCallback,
+    ProgressCallback,
+    TrainerCallback,
+    TrainerControl,
+    TrainerState,
+)
+from transformers.integrations.tpu import tpu_spmd_dataloader
+from transformers.training_args import OptimizerNames, ParallelMode
+
 from transformers.trainer_pt_utils import find_batch_size, nested_detach, nested_numpify, distributed_concat
 from transformers.trainer_utils import EvalLoopOutput, EvalPrediction, TrainOutput, denumpify_detensorize, has_length, speed_metrics
 from transformers.utils import (
@@ -136,7 +147,6 @@ class ADMMTrainer(Trainer):
     """
     Trainer using the external ADMM optimizer from lib.utils.optimizers.
     Supports standard Causal LM loss and Reconstruction Error Minimization (REM) loss.
-    Includes Zeroth-Order (ZO) optimization capabilities.
     """
     def __init__(
         self,
@@ -147,8 +157,91 @@ class ADMMTrainer(Trainer):
         super().__init__(*args, **kwargs)
         if self.is_world_process_zero():
             logger.info(f"ADMMTrainer initialized with loss_type='{self.args.loss_type}'")
+        
+        self.is_deepspeed_enabled = getattr(self.accelerator.state, "deepspeed_plugin", None) is not None
+        self.is_fsdp_enabled = getattr(self.accelerator.state, "fsdp_plugin", None) is not None
+        self.is_tp_enabled = getattr(self.accelerator.state, "torch_tp_plugin", None) is not None
         self.penalty_scheduler = None
         self.sparsity_scheduler = None
+
+    def allocate_nonuniform_sparsity(self):
+
+        admm_param_ids = {id(p) for group in self.optimizer.param_groups if group.get('admm') for p in group['params']}
+
+        def admm_param_filter(name: str, p: nn.Parameter) -> bool:
+            return id(p) in admm_param_ids
+
+        if self.is_world_process_zero():
+            logger.info(f'calculating adaptive sparsity based on {self.args.admm_adaptive_sparsity_samples} samples..')
+        
+        # Get train dataloader and calculate gradients on multiple batches
+        train_dataloader = self.get_train_dataloader()
+        samples_processed = 0
+        batch_size = self.args.per_device_train_batch_size
+        
+        num_batches_needed = max(1, self.args.admm_adaptive_sparsity_samples // batch_size)
+        
+        # Process multiple batches to accumulate gradients
+        batches_processed = 0
+        for batch_idx, batch in enumerate(train_dataloader):
+            if samples_processed >= self.args.admm_adaptive_sparsity_samples:
+                break
+            self.training_step(self.model, batch)
+            samples_processed += batch_size
+            batches_processed += 1
+            
+            if self.is_world_process_zero():
+                logger.info(f'Processed batch {batch_idx + 1}/{num_batches_needed} ({samples_processed}/{self.args.admm_adaptive_sparsity_samples} samples)')
+
+        param_sparsity_map, block_sparsity_map, avg_block_scores = self.calculate_adaptive_sparsity(
+            model=unwrap_model(self.model),
+            target_sparsity=self.args.sparsity_ratio,
+            num_layers=self.model.config.num_hidden_layers,
+            param_filter=admm_param_filter,
+            num_batches=batches_processed
+        )
+        unwrapped_optimizer = self.optimizer.optimizer if hasattr(self.optimizer, 'optimizer') else self.optimizer
+        unwrapped_optimizer.update_sparsity(param_sparsity_map)
+        if self.is_world_process_zero() and block_sparsity_map:
+            logger.info("Fixed adaptive sparsities for training.")
+            # Log the allocated sparsity for each block directly from the returned map
+            sorted_blocks = sorted(block_sparsity_map.items())
+            
+            # --- W&B Table Logging ---
+            # 1. Create a wandb.Table
+            sparsity_table = wandb.Table(columns=["Block Index", "Allocated Sparsity", "Average Score"])
+            
+            # 2. Populate the table
+            for layer_idx, sparsity in sorted_blocks:
+                score = avg_block_scores.get(layer_idx, 0.0)
+                logger.info(f"  - Block {layer_idx:02d} allocated sparsity: {sparsity:.4f}, score: {score:.4e}")
+                sparsity_table.add_data(f"Block {layer_idx:02d}", sparsity, score)
+            
+            # 3. Log the table with a custom bar chart by calling wandb.log() directly
+            if self.args.wandb:
+                if self.is_world_process_zero():
+                    wandb.log({
+                        "adaptive_sparsity_chart": wandb.plot.bar(
+                            sparsity_table, 
+                            "Block Index", 
+                            "Allocated Sparsity",
+                            title="Allocated Sparsity per Block"
+                        ),
+                        "adaptive_score_chart": wandb.plot.bar(
+                            sparsity_table,
+                            "Block Index",
+                            "Average Score",
+                            title="Average Sensitivity Score per Block"
+                        )
+                    }, step=self.state.global_step)
+                # --- End W&B Table Logging ---
+
+            # Keep individual logging for simple tracking if needed
+            wandb_metrics = {f"adaptive_sparsity/block_{idx:02d}": sparsity for idx, sparsity in block_sparsity_map.items()}
+            self.log(wandb_metrics)
+        # 4. Zero out the gradients from the dry run
+        self.model.zero_grad(set_to_none=True)
+        torch.cuda.empty_cache() 
 
     def create_optimizer(self):
         """
@@ -214,83 +307,13 @@ class ADMMTrainer(Trainer):
                  base_optimizer_kwargs["betas"] = (self.args.adam_beta1, self.args.adam_beta2)
                  base_optimizer_kwargs["eps"] = self.args.adam_epsilon
             
-            # Instantiate ADMM optimizer
-            if getattr(self.args, 'admm_adaptive_sparsity', False):
-                def admm_param_filter(name: str, p: nn.Parameter) -> bool:
-                    return id(p) in admm_param_ids
-                if self.is_world_process_zero():
-                    logger.info(f'calculating adaptive sparsity based on {self.args.admm_adaptive_sparsity_samples} samples..')
-                
-                # Get train dataloader and calculate gradients on multiple batches
-                train_dataloader = self.get_train_dataloader()
-                train_dataloader_iterator = iter(train_dataloader)
-                samples_processed = 0
-                batch_size = self.args.per_device_train_batch_size
-                
-                num_batches_needed = max(1, self.args.admm_adaptive_sparsity_samples // batch_size)
-                
-                # Process multiple batches to accumulate gradients
-                batches_processed = 0
-                for _ in tqdm(range(num_batches_needed), desc="Calculating SNIP Scores for adaptive sparsity"):
-                    batch = next(train_dataloader_iterator)
-                    self.training_step(self.model, batch)
-                    samples_processed += batch_size
-                    batches_processed += 1
-
-                param_sparsity_map, block_sparsity_map, avg_block_scores = self.calculate_adaptive_sparsity(
-                    model=unwrap_model(self.model),
-                    target_sparsity=self.args.sparsity_ratio,
-                    num_layers=self.model.config.num_hidden_layers,
-                    param_filter=admm_param_filter,
-                    num_batches=batches_processed
-                )
-                if self.is_world_process_zero() and block_sparsity_map:
-                    logger.info("Fixed adaptive sparsities for training.")
-                    # Log the allocated sparsity for each block directly from the returned map
-                    sorted_blocks = sorted(block_sparsity_map.items())
-                    
-                    # --- W&B Table Logging ---
-                    # 1. Create a wandb.Table
-                    sparsity_table = wandb.Table(columns=["Block Index", "Allocated Sparsity", "Average Score"])
-                    
-                    # 2. Populate the table
-                    for layer_idx, sparsity in sorted_blocks:
-                        score = avg_block_scores.get(layer_idx, 0.0)
-                        logger.info(f"  - Block {layer_idx:02d} allocated sparsity: {sparsity:.4f}, score: {score:.4e}")
-                        sparsity_table.add_data(f"Block {layer_idx:02d}", sparsity, score)
-                    
-                    # 3. Log the table with a custom bar chart by calling wandb.log() directly
-                    if self.args.wandb:
-                        if self.is_world_process_zero():
-                            wandb.log({
-                                "adaptive_sparsity_chart": wandb.plot.bar(
-                                    sparsity_table, 
-                                    "Block Index", 
-                                    "Allocated Sparsity",
-                                    title="Allocated Sparsity per Block"
-                                ),
-                                "adaptive_score_chart": wandb.plot.bar(
-                                    sparsity_table,
-                                    "Block Index",
-                                    "Average Score",
-                                    title="Average Sensitivity Score per Block"
-                                )
-                            }, step=self.state.global_step)
-                        # --- End W&B Table Logging ---
-
-                    # Keep individual logging for simple tracking if needed
-                    wandb_metrics = {f"adaptive_sparsity/block_{idx:02d}": sparsity for idx, sparsity in block_sparsity_map.items()}
-                    self.log(wandb_metrics)
-                # 4. Zero out the gradients from the dry run
-                self.model.zero_grad(set_to_none=True)
-                torch.cuda.empty_cache() 
-
+            def admm_param_filter(name: str, p: nn.Parameter) -> bool:
+                return id(p) in admm_param_ids
+            param_names = {}
+            for name, param in self.model.named_parameters():
+                if admm_param_filter(name, param):
+                    param_names[param] = name
             if self.args.is_safe:
-                # Create parameter name mapping for the optimizer
-                param_names = {}
-                for name, param in self.model.named_parameters():
-                    if admm_param_filter(name, param):
-                        param_names[param] = name
                 
                 self.optimizer = SAFE(
                     param_groups,
@@ -303,12 +326,6 @@ class ADMMTrainer(Trainer):
                     **base_optimizer_kwargs,
                 )
             else:
-                # Create parameter name mapping for the optimizer
-                param_names = {}
-                for name, param in self.model.named_parameters():
-                    if admm_param_filter(name, param):
-                        param_names[param] = name
-                
                 # Debug: print some param_names
                 if self.is_world_process_zero():
                     print(f"Created param_names with {len(param_names)} entries")
@@ -772,113 +789,182 @@ class ADMMTrainer(Trainer):
             # --- END FIX ---
             return super().compute_loss(model, inputs, return_outputs=return_outputs)
 
+    def get_tp_size(self) -> int:
+        """Get the tensor parallel size from either the model or DeepSpeed config."""
 
-    def training_step(self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]]) -> torch.Tensor:
-        """
-        Perform a single training step.
-        - Computes the primary loss (REM or CE).
-        """
-        model.train()
-        inputs = self._prepare_inputs(inputs)
+        # 1. Check model.tp_size first
+        if (model_tp := getattr(self.model, "_tp_size", None)) is not None:
+            return model_tp
 
-        #Loss calculation
-        with self.compute_loss_context_manager():
-            loss = self.compute_loss(model, inputs, return_outputs=False)
+        # 2. Fall back to DeepSpeed config if enabled
+        if self.is_deepspeed_enabled and (deepspeed_config := getattr(self.args, "hf_deepspeed_config", None)):
+            return deepspeed_config.config.get("tensor_parallel", {}).get("autotp_size", 1)
 
-        # --- Gradient Calculation and Scaling ---
-        if self.args.n_gpu > 1:
-            loss = loss.mean()
-        if self.args.gradient_accumulation_steps > 1:
-            loss = loss / self.args.gradient_accumulation_steps
-        
-        # backward
-        if getattr(self,'do_grad_scaling',False):
-            self.scaler.scale(loss).backward()
-        elif self.use_apex:
-            with amp.scale_loss(loss, self.optimizer) as scaled_loss:
-                scaled_loss.backward()
-        elif self.deepspeed:
-            loss = self.deepspeed.backward(loss)
-        else:
-            loss.backward()
+        # 3. Default fallback
+        return 1
 
-        del inputs
-        torch.cuda.empty_cache()  # Clear cache to avoid OOM
-        detached_loss = loss.detach()  # Detach the loss for logging and return
-        return detached_loss
-    
+    def get_total_train_batch_size(self, args) -> int:
+        """Calculates total batch size (micro_batch * grad_accum * dp_world_size).
+
+        Note: Only considers DP and TP (dp_world_size = world_size // tp_size)."""
+        dp_world_size = args.world_size // self.get_tp_size()
+        return self._train_batch_size * args.gradient_accumulation_steps * dp_world_size
+
     ## TODO: implement multi-gpu support!
     def _inner_training_loop(
         self, batch_size=None, args=None, resume_from_checkpoint=None, trial=None, ignore_keys_for_eval=None
     ):
         # --- Setup code (dataloader, steps, optimizer, scheduler, state, resume logic) ---
+        self.accelerator.free_memory()
         self._train_batch_size = batch_size
-        args.gradient_accumulation_steps = getattr(args, 'gradient_accumulation_steps', 1)
+        if self.args.auto_find_batch_size:
+            if self.state.train_batch_size != self._train_batch_size:
+                from accelerate.utils import release_memory
+
+                (self.model_wrapped,) = release_memory(self.model_wrapped)
+                self.model_wrapped = self.model
+
+                # Check for DeepSpeed *after* the initial pass and modify the config
+                if self.is_deepspeed_enabled:
+                    # Temporarily unset `self.args.train_batch_size`
+                    original_bs = self.args.per_device_train_batch_size
+                    self.args.per_device_train_batch_size = self._train_batch_size // max(1, self.args.n_gpu)
+                    self.propagate_args_to_deepspeed(True)
+                    self.args.per_device_train_batch_size = original_bs
+            self.state.train_batch_size = self._train_batch_size
+        logger.debug(f"Currently training with a batch size of: {self._train_batch_size}")
 
         train_dataloader = self.get_train_dataloader()
-        total_train_batch_size = args.train_batch_size * args.gradient_accumulation_steps * args.world_size
+        if self.is_fsdp_xla_v2_enabled:
+            train_dataloader = tpu_spmd_dataloader(train_dataloader)
 
-        len_dataloader = None
-        if has_length(train_dataloader):
-            len_dataloader = len(train_dataloader)
-            num_update_steps_per_epoch = len_dataloader // args.gradient_accumulation_steps
-            num_update_steps_per_epoch = max(num_update_steps_per_epoch, 1)
-            num_examples = self.num_examples(train_dataloader)
-            # Use admm_steps or admm_epochs
-            admm_max_steps = getattr(args, 'admm_steps', -1)
-            admm_num_epochs = getattr(args, 'num_train_epochs', 5)
-            if admm_max_steps > 0:
-                max_steps = admm_max_steps
-                num_train_epochs = max_steps // num_update_steps_per_epoch + int(max_steps % num_update_steps_per_epoch > 0)
+        total_train_batch_size = self.get_total_train_batch_size(args)
+
+        (
+            num_train_epochs,
+            num_update_steps_per_epoch,
+            num_examples,
+            num_train_samples,
+            epoch_based,
+            len_dataloader,
+            max_steps,
+        ) = self.set_initial_training_values(args, train_dataloader, total_train_batch_size)
+
+        num_train_tokens = None
+        if self.args.include_tokens_per_second:
+            num_train_tokens = self.num_tokens(train_dataloader, None if epoch_based else max_steps)
+            # If going by epochs, multiply tokens linearly
+            if len_dataloader is not None and epoch_based:
+                num_train_tokens *= args.num_train_epochs
+            # Otherwise since its steps, we just multiply by grad accum
             else:
-                max_steps = math.ceil(admm_num_epochs * num_update_steps_per_epoch)
-                num_train_epochs = math.ceil(admm_num_epochs)
-            num_train_samples = max_steps * total_train_batch_size # Approx based on steps
-        else:
-             raise ValueError("ADMM training requires a dataloader with length.")
-
-        if args.gradient_checkpointing:
-            if self.is_world_process_zero():
-                logger.info("Enabling gradient checkpointing...")
-            self.model.gradient_checkpointing_enable()
-
-        self.model = self.model.to(args.device)
-
-        # 2. Wrap the model for distributed training (DDP, etc.).
-        #    Use self.model, not self.model_wrapped, as input.
-        model = self._wrap_model(self.model, training=True, dataloader=train_dataloader)
+                num_train_tokens *= args.gradient_accumulation_steps
 
         delay_optimizer_creation = (
-             getattr(self, "sharded_ddp", None) is not None and getattr(self, "sharded_ddp", None) != "simple"
-             or is_sagemaker_mp_enabled() or getattr(self, "fsdp", None) is not None
+            is_sagemaker_mp_enabled() or self.is_fsdp_xla_enabled or self.is_fsdp_enabled or self.is_tp_enabled
         )
+        # Can't delay optimizer creation when using FSDP2: https://github.com/huggingface/accelerate/blob/3f636d626063ffcf9a337c7d3624d61b7d187d59/src/accelerate/accelerator.py#L1404
+        is_fsdp2 = self.is_fsdp_enabled and (getattr(self.accelerator.state.fsdp_plugin, "fsdp_version", 1) == 2)
+        if is_fsdp2:
+            delay_optimizer_creation = False
+
+        # We need to reset the scheduler, as its parameters may be different on subsequent calls
+        if self._created_lr_scheduler:
+            self.lr_scheduler = None
+            self._created_lr_scheduler = False
+
+        if self.is_deepspeed_enabled:
+            self.optimizer, self.lr_scheduler = deepspeed_init(self, num_training_steps=max_steps)
+
         if not delay_optimizer_creation:
-            if self.is_world_process_zero():
-                logger.info(f"Creating ADMM optimizer and scheduler...")
             self.create_optimizer_and_scheduler(num_training_steps=max_steps)
 
-        self.state = TrainerState()
+        self.state = TrainerState(
+            stateful_callbacks=[
+                cb for cb in self.callback_handler.callbacks + [self.control] if isinstance(cb, ExportableState)
+            ]
+        )
         self.state.is_hyper_param_search = trial is not None
-        # Use ADMM specific logging/eval steps
-        self.state.logging_steps = getattr(args, 'admm_logging_steps', args.logging_steps)
-        self.state.eval_steps = getattr(args, 'admm_eval_steps', args.eval_steps)
+        self.state.train_batch_size = self._train_batch_size
 
+        # Compute absolute values for logging, eval, and save if given as ratio
+        if args.logging_steps is not None:
+            if args.logging_steps < 1:
+                self.state.logging_steps = math.ceil(max_steps * args.logging_steps)
+            else:
+                self.state.logging_steps = args.logging_steps
+        if args.eval_steps is not None:
+            if args.eval_steps < 1:
+                self.state.eval_steps = math.ceil(max_steps * args.eval_steps)
+            else:
+                self.state.eval_steps = args.eval_steps
+        if args.save_steps is not None:
+            if args.save_steps < 1:
+                self.state.save_steps = math.ceil(max_steps * args.save_steps)
+            else:
+                self.state.save_steps = args.save_steps
 
-        # The following lines are for specific edge cases and should be kept
-        if is_sagemaker_mp_enabled() and resume_from_checkpoint is not None:
-            self._load_from_checkpoint(resume_from_checkpoint, model)
-        
-        # This is important to keep the internal state consistent after wrapping
+        # Activate gradient checkpointing if needed
+        if args.gradient_checkpointing:
+            self.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs=args.gradient_checkpointing_kwargs)
+
+        model = self._wrap_model(self.model_wrapped)
+
+        # as the model is wrapped, don't use `accelerator.prepare`
+        # this is for unhandled cases such as
+        # FSDP-XLA, SageMaker MP/DP, DataParallel, IPEX
+        use_accelerator_prepare = True if model is self.model else False
+
+        if use_accelerator_prepare and self.is_fsdp_enabled:
+            # In case of auto_find_batch_size=True
+            # Remove FSDP wrapping from sub-models.
+            self.model = unwrap_model(self.model, recursive=True)
+
+        if delay_optimizer_creation:
+            if use_accelerator_prepare:
+                # configure fsdp plugin for qlora if any
+                self._fsdp_qlora_plugin_updates()
+                if self.accelerator.mixed_precision != "fp8":
+                    self.model = self.accelerator.prepare(self.model)
+            self.create_optimizer_and_scheduler(num_training_steps=max_steps)
+
+        # prepare using `accelerator` prepare
+        if use_accelerator_prepare:
+            self.model.train()
+            if hasattr(self.lr_scheduler, "step"):
+                if self.use_apex:
+                    model = self.accelerator.prepare(self.model)
+                else:
+                    if delay_optimizer_creation:
+                        model = self.accelerator.prepare(self.model)
+                    else:
+                        model, self.optimizer = self.accelerator.prepare(self.model, self.optimizer)
+            else:
+                # to handle cases wherein we pass "DummyScheduler" such as when it is specified in DeepSpeed config.
+                model, self.optimizer, self.lr_scheduler = self.accelerator.prepare(
+                    self.model, self.optimizer, self.lr_scheduler
+                )
+        elif self.args.optim in [OptimizerNames.LOMO, OptimizerNames.ADALOMO]:
+            # In this case we are in DDP + LOMO, which should be supported
+            self.optimizer = self.accelerator.prepare(self.optimizer)
+
+        if self.is_fsdp_enabled:
+            self.model = self.model_wrapped = model
+
+        # for the rest of this function `model` is the outside model, whether it was wrapped or not
         if model is not self.model:
             self.model_wrapped = model
 
-        if delay_optimizer_creation:
-            if self.is_world_process_zero():
-                logger.info(f"Delayed creation: Creating ADMM optimizer and scheduler...")
-            self.create_optimizer_and_scheduler(num_training_steps=max_steps)
+        # backward compatibility
+        if self.is_deepspeed_enabled:
+            self.deepspeed = self.model_wrapped
 
+        # Check if saved optimizer or scheduler states exist
         self._load_optimizer_and_scheduler(resume_from_checkpoint)
+        # self._load_scaler(resume_from_checkpoint)
         # self._load_admm_extra_vars(resume_from_checkpoint) # Keep disabled
+        if self.args.admm_adaptive_sparsity:
+            self.allocate_nonuniform_sparsity()
 
         if self.is_world_process_zero():
             logger.info("***** Running ADMM Training *****")
@@ -896,7 +982,7 @@ class ADMMTrainer(Trainer):
             logger.info(f'  ADMM Penalty Scheduler = {args.admm_lmda_schedule_mode}')
             logger.info(f'  ADMM Sparsity Scheduler = {args.admm_sparsity_schedule_mode}')
 
-
+### TODO: update from here!
         self.state.epoch = 0
         start_time = time.time()
         epochs_trained = 0
@@ -1291,9 +1377,9 @@ class ADMMTrainer(Trainer):
             # Average the accumulated gradients by number of batches
             if num_batches > 1:
                 grad_data = grad_data / num_batches
-            sensitivity = (grad_data * param.data.detach().cpu().abs()).sum()
+            sensitivity = (grad_data * param.data.detach().cpu().abs()).mean()
             block_scores[layer_idx]['score'] += sensitivity
-            block_scores[layer_idx]['num_params'] += param.numel()
+            block_scores[layer_idx]['num_params'] += 1
 
         # Step 2: Average block sensitivity
         avg_block_scores = {
@@ -1334,4 +1420,67 @@ class ADMMTrainer(Trainer):
         torch.cuda.empty_cache()
         return param_sparsity_map, block_sparsity_map, avg_block_scores
 
+    def set_initial_training_values(
+        self, args: TrainingArguments, dataloader: DataLoader, total_train_batch_size: int
+    ):
+        """
+        Calculates and returns the following values:
+        - `num_train_epochs`
+        - `num_update_steps_per_epoch`
+        - `num_examples`
+        - `num_train_samples`
+        - `epoch_based`
+        - `len_dataloader`
+        - `max_steps`
+        """
+        # Case 1: we rely on `args.max_steps` first
+        max_steps = args.max_steps
+        # If max_steps is negative, we use the number of epochs to determine the number of total steps later
+        epoch_based = max_steps < 0
+        len_dataloader = len(dataloader) if has_length(dataloader) else None
+
+        # Case 2: We have a dataloader length and can extrapolate
+        if len_dataloader is not None:
+            num_update_steps_per_epoch = max(
+                len_dataloader // args.gradient_accumulation_steps
+                + int(len_dataloader % args.gradient_accumulation_steps > 0),
+                1,
+            )
+            # Case 3: We have a length but are using epochs, we can extrapolate the number of steps
+            if epoch_based:
+                max_steps = math.ceil(args.num_train_epochs * num_update_steps_per_epoch)
+
+        # Now we figure out `num_examples`, `num_train_epochs`, and `train_samples`
+        if len_dataloader:
+            num_examples = self.num_examples(dataloader)
+            if args.max_steps > 0:
+                num_train_epochs = max_steps // num_update_steps_per_epoch + int(
+                    max_steps % num_update_steps_per_epoch > 0
+                )
+                # May be slightly incorrect if the last batch in the training dataloader has a smaller size but it's
+                # the best we can do.
+                num_train_samples = max_steps * total_train_batch_size
+            else:
+                num_train_epochs = math.ceil(args.num_train_epochs)
+                num_train_samples = self.num_examples(dataloader) * args.num_train_epochs
+        elif args.max_steps > 0:  # Rely on max_steps when dataloader does not have a working size
+            # Setting a very large number of epochs so we go as many times as necessary over the iterator.
+            num_train_epochs = sys.maxsize
+            num_update_steps_per_epoch = max_steps
+            num_examples = total_train_batch_size * args.max_steps
+            num_train_samples = args.max_steps * total_train_batch_size
+        else:
+            raise ValueError(
+                "args.max_steps must be set to a positive value if dataloader does not have a length, was"
+                f" {args.max_steps}"
+            )
+        return (
+            num_train_epochs,
+            num_update_steps_per_epoch,
+            num_examples,
+            num_train_samples,
+            epoch_based,
+            len_dataloader,
+            max_steps,
+        )
 
