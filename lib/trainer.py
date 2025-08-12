@@ -681,7 +681,6 @@ class ADMMTrainer(Trainer):
 
         return EvalLoopOutput(predictions=None, label_ids=None, metrics=metrics, num_samples=observed_num_examples)
 
-    #TODO: check compatibility with fsdp2
     def calculate_primal_residual(
         self,
         metric_key_prefix: str = "eval",
@@ -727,6 +726,8 @@ class ADMMTrainer(Trainer):
             }
         """
         groups = self.optimizer.param_groups
+        unwrapped_optimizer = self.optimizer.optimizer if hasattr(self.optimizer, 'optimizer') else self.optimizer
+
         for group in groups:
             if group.get('admm', False):
                 weights = group['params']
@@ -735,7 +736,9 @@ class ADMMTrainer(Trainer):
                 for w in weights:
                     u = self.optimizer.state[w]['dual']
                     z = self.optimizer.state[w]['split']
-                    z_new = projection([w+u], sparsity=self.optimizer.sparsity, prune_n=self.optimizer.prune_n, prune_m=self.optimizer.prune_m, comparison_group= self.optimizer.comparison_group)[0]
+                    param_name = unwrapped_optimizer(w)
+                    p_sparsity = unwrapped_optimizer.get(param_name, unwrapped_optimizer.sparsity) if unwrapped_optimizer.param_sparsity_map is not None else unwrapped_optimizer.sparsity
+                    z_new = projection([w+u], sparsity=p_sparsity, prune_n=unwrapped_optimizer.prune_n, prune_m=unwrapped_optimizer.prune_m, comparison_group=unwrapped_optimizer.comparison_group)[0]
                     dual_residual += torch.norm(z_new-z, p=2)**2
                 dual_residual = torch.sqrt(dual_residual)
         return {
@@ -1238,8 +1241,9 @@ class ADMMTrainer(Trainer):
                                 grad_norm = grad_norm.item()
                         else:
                             grad_norm = _grad_norm
-
-                    is_dual_update_step = (self.optimizer.current_step + 1) % self.optimizer.interval == 0
+                    
+                    unwrapped_optimizer = self.optimizer.optimizer if hasattr(self.optimizer, 'optimizer') else self.optimizer
+                    is_dual_update_step = (unwrapped_optimizer.current_step + 1) % unwrapped_optimizer.interval == 0
 
                     ## activation generalized projection. reduce on micro-batch, update importance matrix
                     if self.args.admm_projection_mode == 'activation' and is_dual_update_step:
@@ -1254,13 +1258,13 @@ class ADMMTrainer(Trainer):
                             if all(v is not None for v in final_importance_vectors):
                                 device = admm_params[0].device
                                 vectors_on_device = [v.to(device) for v in final_importance_vectors]
-                                self.optimizer.update_importance_matrix(vectors_on_device)
+                                unwrapped_optimizer.update_importance_matrix(vectors_on_device)
                                 del vectors_on_device
                             del self.importance_accumulator
                             torch.cuda.empty_cache()
                         
                     if is_dual_update_step:
-                        mask_diff = self.optimizer.get_mask_diff()
+                        mask_diff = unwrapped_optimizer.get_mask_diff()
                         if self.is_world_process_zero():
                             logger.info(f'ADMM Step {self.state.global_step}: Mask difference: {mask_diff:.4f}')
                             wandb_metrics = {'ADMM_mask_difference': mask_diff}  
@@ -1327,7 +1331,7 @@ class ADMMTrainer(Trainer):
             # Clean the state at the end of training
             delattr(self, "_past")
         # Final projection must be called on all processes to keep weights in sync
-        self.optimizer.final_projection() ## TODO: move this to on_train_end()
+        unwrapped_optimizer.final_projection() 
         if self.is_world_process_zero():
             logger.info('final projection finished')
 
