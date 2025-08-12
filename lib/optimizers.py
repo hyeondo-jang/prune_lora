@@ -81,30 +81,39 @@ class ADMM(torch.optim.Optimizer):
                 if not group['params']:
                     print(f"Warning: ADMM group {i} has no params.")
                     continue
-                
-                admm_params_list = group['params']
-                group['duals'] = [torch.zeros_like(p, device=p.device) for p in admm_params_list]
+                params = group['params']
+                group['lmda'] = lmda
                 if importance_matrix is not None:
-                    if len(importance_matrix) != len(admm_params_list):
+                    if len(importance_matrix) != len(params):
                         raise ValueError(f"importance_matrix must have the same length as params in group {i}.")
                 
-                # Use per-parameter sparsity for the initial projection
-                splits_list = []
-                for p in admm_params_list:
-                    # Get parameter name for sparsity lookup
-                    param_name = self._get_param_name(p)
-                    p_sparsity = self.param_sparsity_map.get(param_name, self.sparsity) if self.param_sparsity_map is not None else self.sparsity
-                    splits_list.append(self.projection([p], p_sparsity, prune_n, prune_m, importance_matrix, comparison_group=self.comparison_group)[0])
-                group['splits'] = splits_list
+                for p_idx, p in enumerate(params):
+                    if p.grad is None and p.requires_grad:
+                        pass
+                    st = self.state[p]
 
-                if 'lmda' not in group:
-                    group['lmda'] = lmda
+                    if 'dual' not in st:
+                        st['dual'] = torch.zeros_like(p, device=p.device)
+                        st['dual'].requires_grad_(False)
+
+                    if 'split' not in st:
+                        pname = self._get_param_name(p)
+                        p_sparsity = self.param_sparsity_map.get(pname, self.sparsity) if self.param_sparsity_map is not None else self.sparsity
+
+                        imp_i = importance_matrix[p_idx] if self.importance_matrix is not None else None 
+
+                        z0 = self.projection([p], p_sparsity, prune_n, prune_m,
+                                            imp_i, comparison_group=self.comparison_group)[0]
+
+                        z0 = z0.to(device=p.device)
+                        z0.requires_grad_(False)
+                        st['split'] = z0
         
         # Create the base optimizer using the processed param_groups
         base_param_groups = []
         for pg in self.param_groups:
             # Filter out ADMM-specific keys for the base optimizer
-            base_pg = {k: v for k, v in pg.items() if k not in ['duals', 'splits', 'admm', 'lmda']}
+            base_pg = {k: v for k, v in pg.items() if k not in ['lmda','admm']}
             base_param_groups.append(base_pg)
         self.base_optimizer = base_optimizer(base_param_groups, **kwargs)
 
@@ -160,16 +169,18 @@ class ADMM(torch.optim.Optimizer):
     @torch.no_grad()
     def step(self, zero_grad=False):
         # get x_t,u_t,z_t
-        for group in self.param_groups:
-            if group.get('admm', False):
-                weights = group['params']
-                lmda = group['lmda']
-                duals = group['duals']
-                splits = group['splits']
+        with torch.no_grad():
+            for group in self.param_groups:
+                if group.get('admm', False):
+                    weights = group['params']
+                    lmda = group['lmda']
 
-                for i in range(len(weights)):
-                    proximal = lmda * (weights[i].detach() - splits[i].detach() + duals[i].detach()) # proximal gradient w-z+u
-                    weights[i].grad.add_(proximal) 
+                    
+                    for i in range(len(weights)):
+                        dual = self.state[weights[i]]['dual']
+                        split = self.state[weights[i]]['split']
+                        proximal = lmda * (weights[i].detach() - split.detach() + dual.detach()) # proximal gradient w-z+u
+                        weights[i].grad.add_(proximal)
         self.base_optimizer.step()
         
         # dual update
@@ -180,20 +191,15 @@ class ADMM(torch.optim.Optimizer):
                     if group.get('admm', False):
                         weights = group['params'] # W_t+1
                         lmda = group['lmda']
-                        duals = group['duals']   # U_t
-                        splits = group['splits'] # Z_t
 
-                        if not all([weights, duals, splits]):
-                            print(f"Warning: ADMM group missing weights, duals, or splits. Skipping dual/split update for this group.")
-                            continue
-                        if not (len(weights) == len(duals) == len(splits)):
-                            print(f"Warning: Mismatch in lengths of weights, duals, splits for an ADMM group. Skipping dual/split update.")
-                            continue
-                        for i in range(len(duals)):
-                            z_input_i = weights[i].detach() + duals[i].detach()
-                            importance_matrix_i = None # 기본값
+                        for i in range(len(weights)):
+                            dual = self.state[weights[i]]['dual']
+                            split = self.state[weights[i]]['split']
+                            z_input_i = weights[i].detach() + dual.detach()
+
+                            importance_matrix_i = None 
                             if self.projection_mode == 'gradient':
-                                proximal = lmda * (weights[i].detach() - splits[i].detach() + duals[i].detach())
+                                proximal = lmda * (weights[i].detach() - split.detach() + dual.detach())
                                 grad_input_i = weights[i].grad.detach() - proximal
                                 current_importance = torch.pow(grad_input_i, 2)
                                 if self.importance_ema <= 0:
@@ -223,17 +229,17 @@ class ADMM(torch.optim.Optimizer):
                                 importance_matrix=importance_matrix_i,
                                 comparison_group=self.comparison_group
                             )[0]
-                            u_new_i = duals[i].detach() + self.alpha * (weights[i].detach() - z_new_i) # U_t+1 = U_t + \alpha(W_t+1 - Z_t+1)
+                            u_new_i = dual.detach() + self.alpha * (weights[i].detach() - z_new_i) # U_t+1 = U_t + \alpha(W_t+1 - Z_t+1)
                             
                             # mask difference
-                            old_mask = (splits[i] == 0).detach().cpu()
+                            old_mask = (split == 0).detach().cpu()
                             new_mask = (z_new_i == 0).detach().cpu()
-                            self.mask_diff += (torch.sum(old_mask != new_mask).item() / splits[i].numel())
+                            self.mask_diff += (torch.sum(old_mask != new_mask) / split.numel()).item()
 
                             #update
-                            duals[i].copy_(u_new_i)
-                            splits[i].copy_(z_new_i)
-                        self.mask_diff /= len(duals)
+                            self.state[weights[i]]['dual'].copy_(u_new_i)
+                            self.state[weights[i]]['split'].copy_(z_new_i)
+                        self.mask_diff /= len(weights)
         self.current_step += 1
 
     def _get_param_name(self, param):

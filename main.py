@@ -135,7 +135,7 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    flags.DEFINE_string('model', 'facebook/opt-125m', 'model to prune.')
+    flags.DEFINE_string('model', 'meta-llama/Meta-Llama-3-8B', 'model to prune.')
     flags.DEFINE_integer('seqlen', 2048, 'Sequence length for the model.')
     flags.DEFINE_integer('seed', 0, 'Seed for sampling the calibration data.')
     flags.DEFINE_integer('nsamples', 128, 'Number of calibration samples.')
@@ -169,9 +169,9 @@ if __name__ == '__main__':
     # Training Loop Config
     flags.DEFINE_integer('admm_epochs', 1, 'Number of epochs for ADMM training.')
     flags.DEFINE_integer('admm_steps', 10, 'Max steps for ADMM training. Overrides admm_epochs if > 0.')
-    flags.DEFINE_integer('admm_batch_size', 2, 'Batch size for ADMM training.')
-    flags.DEFINE_integer('admm_gradient_accumulation_steps', 4, 'Gradient accumulation steps for ADMM.')
-    flags.DEFINE_bool('admm_gradient_checkpointing', True, 'Use gradient checkpointing for ADMM training.')
+    flags.DEFINE_integer('admm_batch_size', 8, 'Batch size for ADMM training.')
+    flags.DEFINE_integer('admm_gradient_accumulation_steps', 1, 'Gradient accumulation steps for ADMM.')
+    flags.DEFINE_bool('admm_gradient_checkpointing', False, 'Use gradient checkpointing for ADMM training. Set False when using FSDP')
     flags.DEFINE_float('admm_lr', 2e-4, 'Learning rate for ADMM base optimizer.')
     flags.DEFINE_string('admm_lr_scheduler', 'linear', 'Learning rate scheduler type for ADMM.')
     flags.DEFINE_integer('admm_warmup_steps', 0, 'Warmup steps for ADMM learning rate scheduler.')
