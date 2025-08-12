@@ -14,243 +14,184 @@ class ADMM(torch.optim.Optimizer):
         lr: float = 2e-4,
         prune_n: int = 0,
         prune_m: int = 0,
-        importance_matrix: list[torch.Tensor] = None,
+        # importance_matrix is removed from __init__
         comparison_group: str = 'layer',
         projection_mode: str = 'identity',
         importance_ema: float = 0.0,
-        param_sparsity_map: Dict[str, float] = None,
-        param_names: Dict[torch.nn.Parameter, str] = None,
         **kwargs
     ):
         """
-        ADMM optimizer 
+        ADMM optimizer with both sparsity and importance matrix stored in optimizer state.
         Args:
             param_groups (list): List of parameter groups.
-                Each group is a dict, e.g., {'params': [...], 'admm': True, 'lmda': 0.01}
-                'admm': True indicates this group's params are subject to ADMM. Dual and split variables are created as optimizer state for these params.
-                'lmda': Penalty parameter for this ADMM group.
-            projection_fn (callable): Projection function to use. Should take a list of tensors and return a list of projected tensors.
-                Expected signature: projection_fn(params_list, sparsity, prune_n, prune_m, importance_matrix) -> projected_params_list
+                Each group is a dict, e.g., {'params': [...], 'admm': True}
+                'admm': True indicates this group's params are subject to ADMM.
+            projection_fn (callable): Projection function to use.
             sparsity (float): Sparsity target.
             interval (int): Interval for dual update.
-            base_optimizer (torch.optim.Optimizer): Base optimizer to use. e.g. torch.optim.Adam, torch.optim.SGD
-            alpha (float): Over-relaxation parameter for ADMM. Default is 1.0.
-            lmda (float): penalty parameter.
+            base_optimizer (torch.optim.Optimizer): Base optimizer to use.
+            alpha (float): Over-relaxation parameter for ADMM.
+            lmda (float): Penalty parameter.
             lr (float): Learning rate for the base optimizer.
             prune_n (int): n for n:m structured sparsity.
             prune_m (int): m for n:m structured sparsity.
-            importance_matrix (list[torch.Tensor], optional): Importance matrix used for generalized projection. Must have the same structure as param_groups with admm=True.
-            comparison_group (str): Comparison group for ADMM projection ('layer', 'column', 'row').
-            projection_mode (str): Mode for the projection function. Default is 'identity (P=I)'. We currently support 'gradient' (P = diag(nabla L nabla L^T)) and 'activation' (P = diag(A^TA)). Note that 'activation' needs importance_matrix to be provided.
-            importance_ema (float): Exponential moving average coefficient for importance matrix. Default is 0.0 (no EMA).
-            param_sparsity_map (Dict[int, float]): Optional dictionary mapping parameter IDs to their sparsity values. If provided, this will override the global sparsity value for each parameter.
+            importance_matrix (list[torch.Tensor], optional): Importance matrix for projection.
+            comparison_group (str): Comparison group for projection ('layer', 'column', 'row').
+            projection_mode (str): Mode for the projection function ('identity', 'gradient', 'activation').
+            importance_ema (float): EMA coefficient for importance matrix.
             **kwargs: Additional arguments for the base optimizer.
         """
         if not callable(projection_fn):
             raise TypeError("projection_fn must be a callable function.")
         
-        # Define defaults and call the parent constructor FIRST.
-        # This initializes self.param_groups and self.state.
         defaults = dict(lr=lr, **kwargs)
         super(ADMM, self).__init__(param_groups, defaults)
 
-        self.projection= projection_fn
+        self.projection = projection_fn
         self.comparison_group = comparison_group.lower()
         if self.comparison_group not in ['layer', 'column', 'row']:
             raise ValueError(f"comparison_group must be one of 'layer', 'column', 'row'. Got {self.comparison_group}.")
-        ## other control variables
+        
         self.alpha = alpha
         if not (0 <= self.alpha <= 2):
             raise ValueError(f"alpha must be in the range [0, 2]. Got {self.alpha}.")
-        self.importance_matrix = importance_matrix if importance_matrix is not None else None
+        
         self.projection_mode = projection_mode.lower()
         if self.projection_mode not in ['identity', 'gradient', 'activation']:
             raise ValueError(f"projection_mode must be one of 'identity', 'gradient', 'activation'. Got {self.projection_mode}.")
+        
         self.importance_ema = importance_ema
-        self.sparsity = sparsity
-        self.param_sparsity_map = param_sparsity_map if param_sparsity_map is not None else None
-        self.param_names = param_names if param_names is not None else {}
+        self.sparsity = sparsity # Global default sparsity
         self.interval = interval
         self.current_step = 0
         self.prune_n = prune_n
         self.prune_m = prune_m
         self.mask_diff = 0.0
-        # Now, iterate through self.param_groups to set up ADMM-specific state and variables.
-        for i, group in enumerate(self.param_groups):
+
+        for group in self.param_groups:
             if group.get('admm', False):
-                if not group['params']:
-                    print(f"Warning: ADMM group {i} has no params.")
-                    continue
-                params = group['params']
                 group['lmda'] = lmda
-                if importance_matrix is not None:
-                    if len(importance_matrix) != len(params):
-                        raise ValueError(f"importance_matrix must have the same length as params in group {i}.")
-                
-                for p_idx, p in enumerate(params):
-                    if p.grad is None and p.requires_grad:
-                        pass
-                    st = self.state[p]
-
-                    if 'dual' not in st:
-                        st['dual'] = torch.zeros_like(p, device=p.device)
-                        st['dual'].requires_grad_(False)
-
-                    if 'split' not in st:
-                        pname = self._get_param_name(p)
-                        p_sparsity = self.param_sparsity_map.get(pname, self.sparsity) if self.param_sparsity_map is not None else self.sparsity
-
-                        imp_i = importance_matrix[p_idx] if self.importance_matrix is not None else None 
-
-                        z0 = self.projection([p], p_sparsity, prune_n, prune_m,
-                                            imp_i, comparison_group=self.comparison_group)[0]
-
-                        z0 = z0.to(device=p.device)
-                        z0.requires_grad_(False)
-                        st['split'] = z0
         
-        # Create the base optimizer using the processed param_groups
         base_param_groups = []
         for pg in self.param_groups:
-            # Filter out ADMM-specific keys for the base optimizer
-            base_pg = {k: v for k, v in pg.items() if k not in ['lmda','admm']}
+            base_pg = {k: v for k, v in pg.items() if k not in ['lmda', 'admm']}
             base_param_groups.append(base_pg)
         self.base_optimizer = base_optimizer(base_param_groups, **kwargs)
 
-    def get_mask_diff(self):
+    def _lazy_init_admm_state(self, p: torch.nn.Parameter):
         """
-        Returns the mask difference calculated during the last step.
-        This is the number of parameters that changed their mask in the last ADMM dual update step.
+        Lazily initialize the 'dual', 'split', 'sparsity', and 'importance' states for a parameter.
         """
-        return self.mask_diff
+        if 'dual' in self.state[p]:
+            return
 
-    def update_importance_matrix(self, importance_matrix):
-        if len(importance_matrix) != len(self.param_groups[0]['params']):
-            raise ValueError("importance_matrix must have the same length as params in the first ADMM(weight) group.")
-        if self.importance_ema > 0:
-            if not self.importance_matrix:
-                self.importance_matrix = [v.clone().detach() for v in importance_matrix]
-            else:
-                for i in range(len(self.importance_matrix)):
-                    self.importance_matrix[i] = self.importance_ema * self.importance_matrix[i] + (1 - self.importance_ema) * importance_matrix[i].clone().detach()
-        else:
-            self.importance_matrix = importance_matrix
-        self.param_names = param_names if param_names is not None else {}
+        st = self.state[p]
+        st['dual'] = torch.zeros_like(p, memory_format=torch.preserve_format)
+        st['sparsity'] = self.sparsity
+        init_importance = None
+        if self.projection_mode != 'identity': 
+            # Store only the diagonal of the importance matrix as a vector.
+            # For a Linear layer weight of shape (out, in), the diagonal has 'in' elements.
+            st['importance'] = torch.zeros(p.shape[-1], device=p.device)
+            init_importance = st['importance']
 
-    def update_sparsity(self, sparsity_map: Dict[str, float]):
-        """Updates the sparsity for each parameter from a dictionary."""
-        if self.param_sparsity_map is None:
-            self.param_sparsity_map = {}
-        for group in self.param_groups:
-            if group.get('admm', False):
-                for p in group['params']:
-                    param_name = self._get_param_name(p)
-                    if param_name in sparsity_map:
-                        self.param_sparsity_map[param_name] = sparsity_map[param_name]
+        # Initial projection for 'split' uses the initial importance (zeros)
+        z0 = self.projection(
+            [p.detach()], st['sparsity'], self.prune_n, self.prune_m, init_importance, comparison_group=self.comparison_group
+        )[0]
+        st['split'] = z0.to(device=p.device)
 
     def final_projection(self):
-        for group in self.param_groups:
-            if group.get('admm', False):
-                weights = group['params']
-                for i in range(len(weights)):
-                    w = weights[i].detach()
-                    param_name = self._get_param_name(weights[i])
-                    p_sparsity = self.param_sparsity_map.get(param_name, self.sparsity) if self.param_sparsity_map is not None else self.sparsity
-                    final_weight=self.projection(
-                        [w],
-                        p_sparsity,
-                        prune_n=self.prune_n,
-                        prune_m=self.prune_m,
-                        importance_matrix=self.importance_matrix[i] if self.importance_matrix is not None else None,
-                        comparison_group=self.comparison_group
-                    )[0]
-                    weights[i].data.copy_(final_weight)
-
-    @torch.no_grad()
-    def step(self, zero_grad=False):
-        # get x_t,u_t,z_t
+        """Applies the final projection to the ADMM parameters."""
         with torch.no_grad():
             for group in self.param_groups:
                 if group.get('admm', False):
-                    weights = group['params']
-                    lmda = group['lmda']
+                    for w in group['params']:
+                        self._lazy_init_admm_state(w)
+                        
+                        p_sparsity = self.state[w]['sparsity']
+                        p_importance = self.state[w]['importance']
+                        
+                        final_weight = self.projection(
+                            [w.detach()], p_sparsity, self.prune_n, self.prune_m, p_importance, self.comparison_group
+                        )[0]
+                        w.data.copy_(final_weight)
 
-                    
-                    for i in range(len(weights)):
-                        dual = self.state[weights[i]]['dual']
-                        split = self.state[weights[i]]['split']
-                        proximal = lmda * (weights[i].detach() - split.detach() + dual.detach()) # proximal gradient w-z+u
-                        weights[i].grad.add_(proximal)
+    @torch.no_grad()
+    def step(self, zero_grad=False):
+        for group in self.param_groups:
+            if group.get('admm', False):
+                weights = group['params']
+                lmda = group['lmda']
+                for w in weights:
+                    if w.grad is None: continue
+                    self._lazy_init_admm_state(w)
+                    dual = self.state[w]['dual']
+                    split = self.state[w]['split']
+                    proximal = lmda * (w.detach() - split.detach() + dual.detach())
+                    w.grad.add_(proximal)
+
         self.base_optimizer.step()
         
-        # dual update
         if (self.current_step + 1) % self.interval == 0:
-            self.mask_diff = 0.0 ## z difference
+            self.mask_diff = 0.0
             with torch.no_grad():
                 for group in self.param_groups:
                     if group.get('admm', False):
-                        weights = group['params'] # W_t+1
+                        weights = group['params']
                         lmda = group['lmda']
+                        for w in weights:
+                            self._lazy_init_admm_state(w)
+                            st = self.state[w]
+                            dual = st['dual']
+                            split = st['split']
+                            p_sparsity = st['sparsity']
 
-                        for i in range(len(weights)):
-                            dual = self.state[weights[i]]['dual']
-                            split = self.state[weights[i]]['split']
-                            z_input_i = weights[i].detach() + dual.detach()
-
-                            importance_matrix_i = None 
-                            if self.projection_mode == 'gradient':
-                                proximal = lmda * (weights[i].detach() - split.detach() + dual.detach())
-                                grad_input_i = weights[i].grad.detach() - proximal
-                                current_importance = torch.pow(grad_input_i, 2)
-                                if self.importance_ema <= 0:
-                                    importance_matrix_i = current_importance
-                                # EMA
-                                else:
-                                    if not self.importance_matrix:
-                                        self.importance_matrix = [torch.zeros_like(p) for p in weights]
-                                    beta = self.importance_ema
-                                    self.importance_matrix[i].mul_(beta).add_(current_importance, alpha=1 - beta)
-                                    importance_matrix_i = self.importance_matrix[i]
-                            elif self.projection_mode == 'activation':
-                                if self.importance_matrix is not None and i<len(self.importance_matrix):
-                                    importance_matrix_i = self.importance_matrix[i].unsqueeze(0).to(z_input_i.device)
-
-                            if self.param_sparsity_map is not None:
-                                param_name = self._get_param_name(weights[i])
-                                p_sparsity = self.param_sparsity_map.get(param_name, self.sparsity)
-                            else:
-                                p_sparsity = self.sparsity
-                            # dual update
-                            z_new_i = self.projection(
-                                [z_input_i],
-                                p_sparsity,
-                                prune_n=self.prune_n,
-                                prune_m=self.prune_m,
-                                importance_matrix=importance_matrix_i,
-                                comparison_group=self.comparison_group
-                            )[0]
-                            u_new_i = dual.detach() + self.alpha * (weights[i].detach() - z_new_i) # U_t+1 = U_t + \alpha(W_t+1 - Z_t+1)
+                            z_input_i = w.detach() + dual.detach()
+                            importance_matrix_i = None
                             
-                            # mask difference
+                            if self.projection_mode == 'gradient':
+                                proximal = lmda * (w.detach() - split.detach() + dual.detach())
+                                grad_input_i = w.grad.detach() - proximal
+                                current_importance = torch.pow(grad_input_i, 2)
+                                
+                                # Update importance matrix in the state using EMA
+                                if self.importance_ema > 0:
+                                    st['importance'].mul_(self.importance_ema).add_(current_importance, alpha=1 - self.importance_ema)
+                                else:
+                                    st['importance'].copy_(current_importance)
+                                importance_matrix_i = st['importance']
+                            
+                            elif self.projection_mode == 'activation':
+                                # For activation mode, the trainer should have updated the state beforehand.
+                                # We just use the value from the state.
+                                importance_matrix_i = st['importance']
+
+                            z_new_i = self.projection(
+                                [z_input_i], p_sparsity, self.prune_n, self.prune_m,
+                                importance_matrix_i, comparison_group=self.comparison_group
+                            )[0]
+                            
+                            u_new_i = dual.detach() + self.alpha * (w.detach() - z_new_i)
+                            
                             old_mask = (split == 0).detach().cpu()
                             new_mask = (z_new_i == 0).detach().cpu()
                             self.mask_diff += (torch.sum(old_mask != new_mask) / split.numel()).item()
 
-                            #update
-                            self.state[weights[i]]['dual'].copy_(u_new_i)
-                            self.state[weights[i]]['split'].copy_(z_new_i)
-                        self.mask_diff /= len(weights)
+                            dual.copy_(u_new_i)
+                            split.copy_(z_new_i)
+                        
+                        if len(weights) > 0:
+                            self.mask_diff /= len(weights)
+                            
         self.current_step += 1
 
-    def _get_param_name(self, param):
-        """Helper method to get parameter name from parameter object."""
-        # Try to find parameter name in the stored param_names mapping
-        if param in self.param_names:
-            return self.param_names[param]
-        else:
-            return None
-
-
+    def get_mask_diff(self):
+        """
+        Returns the mask difference since the last step.
+        This is useful for logging or monitoring changes in sparsity.
+        """
+        return self.mask_diff
 class SAFE(torch.optim.Optimizer):
     def __init__(self, 
                 param_groups,
@@ -423,7 +364,6 @@ class SAFE(torch.optim.Optimizer):
         self.first_step(zero_grad=True)
         closure()
         self.second_step()
-
 
 class SAM(torch.optim.Optimizer):
     def __init__(
