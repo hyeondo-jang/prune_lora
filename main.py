@@ -8,7 +8,9 @@ from absl import logging, app, flags
 from importlib.metadata import version
 from argparse import Namespace
 import os # os 모듈 import
-
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.checkpoint.state_dict import StateDictOptions,get_model_state_dict
+import torch.distributed as dist
 #logging
 import wandb
 
@@ -83,19 +85,29 @@ def main(argv):
             globalprune_admm(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
         elif FLAGS.prune_method == 'dense':
             logging.info("No pruning applied, model remains dense.")
-        
-    if int(os.environ.get("WORLD_SIZE", 1)) > 1:
-        torch.distributed.barrier()
     
     if local_rank == 0:
-        logging.info("Pruning finished on all processes. Starting evaluation on rank 0.")
+        logging.info("Pruning finished")
+    
+    if int(os.environ.get("WORLD_SIZE", 1)) > 1: ## destroy other process, gather params.
+        if local_rank == 0:
+            logging.info("Gathering models from fsdp")
+        dist.barrier()
+        state_dict_options = StateDictOptions(full_state_dict=True, cpu_offload=True)
+        full_state = get_model_state_dict(model, options=state_dict_options)     # gather params, send to cpu.
+        dist.destroy_process_group()
 
+    if int(os.environ.get("RANK", "0")) == 0 and int(os.environ.get("WORLD_SIZE",1)) > 1:
+        logging.info("Loading full model state dict.")
+        model = get_llm(FLAGS.model, FLAGS.seqlen)
+        model.load_state_dict(full_state)
+    
     if local_rank == 0:
-        # Move the final model to the designated device for evaluation
+        
         model = model.to(torch.float16)
         model.seq_len = FLAGS.seqlen
         model = model.to(device)
-
+        model.eval()
         # sparsity sanity check
         logging.info("*"*30)
         sparsity_ratio = check_sparsity(model,log_by_block=True)
@@ -118,24 +130,21 @@ def main(argv):
             logging.info(f"Zero-shot results after pruning with ({FLAGS.prune_method}):")
             logging.info(results_after)
             if FLAGS.wandb:
-                 for task_name, metrics in results_after.items():
-                      try:
-                           acc = metrics.get('acc,none', metrics.get('acc', None))
-                           stderr = metrics.get('acc_stderr,none', metrics.get('acc_stderr', None))
-                           if acc is not None:
+                for task_name, metrics in results_after.items():
+                    try:
+                        acc = metrics.get('acc,none', metrics.get('acc', None))
+                        stderr = metrics.get('acc_stderr,none', metrics.get('acc_stderr', None))
+                        if acc is not None:
                                 wandb.log({f"{FLAGS.prune_method}/{task_name}_acc": acc})
-                           if stderr is not None:
+                        if stderr is not None:
                                 wandb.log({f"{FLAGS.prune_method}/{task_name}_stderr": stderr})
-                      except Exception as log_e:
-                           logging.warning(f"Could not log zero-shot metric for {task_name}: {log_e}")
+                    except Exception as log_e:
+                        logging.warning(f"Could not log zero-shot metric for {task_name}: {log_e}")
     
-    # Other processes will exit gracefully after the barrier.
-    if int(os.environ.get("WORLD_SIZE", 1)) > 1:
-        torch.distributed.destroy_process_group()
 
 
 if __name__ == '__main__':
-    flags.DEFINE_string('model', 'meta-llama/Meta-Llama-3-8B', 'model to prune.')
+    flags.DEFINE_string('model', 'meta-llama/Llama-3.2-3B', 'model to prune.')
     flags.DEFINE_integer('seqlen', 2048, 'Sequence length for the model.')
     flags.DEFINE_integer('seed', 0, 'Seed for sampling the calibration data.')
     flags.DEFINE_integer('nsamples', 128, 'Number of calibration samples.')
@@ -169,7 +178,7 @@ if __name__ == '__main__':
     # Training Loop Config
     flags.DEFINE_integer('admm_epochs', 1, 'Number of epochs for ADMM training.')
     flags.DEFINE_integer('admm_steps', 10, 'Max steps for ADMM training. Overrides admm_epochs if > 0.')
-    flags.DEFINE_integer('admm_batch_size', 8, 'Batch size for ADMM training.')
+    flags.DEFINE_integer('admm_batch_size', 4, 'Batch size for ADMM training, per device.')
     flags.DEFINE_integer('admm_gradient_accumulation_steps', 1, 'Gradient accumulation steps for ADMM.')
     flags.DEFINE_bool('admm_gradient_checkpointing', False, 'Use gradient checkpointing for ADMM training. Set False when using FSDP')
     flags.DEFINE_float('admm_lr', 2e-4, 'Learning rate for ADMM base optimizer.')
@@ -201,7 +210,7 @@ if __name__ == '__main__':
     flags.DEFINE_float('admm_adaptive_sparsity_smooth_temperature', 2, 'Alpha for smoothing the adaptive sparsity scores in ADMM.')
     
     # Logging & Evaluation
-    flags.DEFINE_integer('admm_logging_steps', 10, 'Logging step interval for ADMM training.')
+    flags.DEFINE_integer('admm_logging_steps', 1, 'Logging step interval for ADMM training.')
     flags.DEFINE_integer('admm_eval_steps', 100, 'Evaluation step interval for ADMM training.')
 
 
