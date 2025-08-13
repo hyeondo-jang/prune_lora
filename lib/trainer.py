@@ -1,4 +1,4 @@
-# 기본 라이브러리
+
 import math
 import os
 import time
@@ -6,7 +6,6 @@ from typing import Any, Dict, List, Optional, Tuple, Union, Callable
 from absl import logging
 import wandb
 
-# PyTorch 관련
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,12 +13,10 @@ from torch.utils.data import DataLoader, Dataset, RandomSampler
 import torch.distributed as dist
 import shutil
 
-# 외부 라이브러리
 import numpy as np
 from packaging import version
 import re
 
-# Hugging Face Transformers 관련 (핵심 모듈)
 from transformers import Trainer, TrainingArguments
 from transformers.optimization import get_scheduler
 from transformers.modeling_utils import unwrap_model
@@ -49,15 +46,10 @@ from transformers.utils import (
     is_accelerate_available
 )
 
-# 현재 프로젝트 관련
 from .optimizers import ADMM,SAFE
 from .scheduler import PenaltyScheduler, SparsityScheduler
 from .utils import find_layers, projection
 
-# =====================================================================================
-# 조건부 Import 블록: 분산 환경 및 특정 라이브러리 의존성 처리
-# 이 블록은 필요한 라이브러리가 없을 경우 오류를 발생시키지 않고 None으로 처리합니다.
-# =====================================================================================
 from transformers.utils import (
     is_sagemaker_mp_enabled,
     is_torch_tpu_available,
@@ -74,7 +66,6 @@ if is_sagemaker_mp_enabled():
 else:
     IS_SAGEMAKER_MP_POST_1_10 = False
 
-# TPU 관련
 pl = None
 nested_xla_mesh_reduce = None
 if is_torch_tpu_available():
@@ -86,7 +77,6 @@ if is_torch_tpu_available():
         pl = None
         nested_xla_mesh_reduce = None
 
-# DDP/Deepspeed 관련
 distributed_concat = None
 try:
     from transformers.trainer_pt_utils import distributed_concat
@@ -123,9 +113,7 @@ if is_accelerate_available("0.28.0"):
 # =====================================================================================
 
 logger = logging
-# logger = logging.get_logger(__name__)
 
-# 체크포인트 파일 이름
 TRAINING_ARGS_NAME = "training_args.bin"
 TRAINER_STATE_NAME = "trainer_state.json"
 OPTIMIZER_NAME = "optimizer.pt"
