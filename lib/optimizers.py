@@ -1,6 +1,8 @@
 import torch
 from typing import Union, Dict
-
+import torch.distributed as dist
+from torch.distributed.tensor import DTensor
+## TODO: ADD support for fsdp2 (projection - full tensor)
 class ADMM(torch.optim.Optimizer):
     def __init__(
         self, 
@@ -90,6 +92,7 @@ class ADMM(torch.optim.Optimizer):
         st['sparsity'] = self.sparsity
         init_importance = None
         if self.projection_mode != 'identity': 
+            #TODO: implement here
             # Store only the diagonal of the importance matrix as a vector.
             # For a Linear layer weight of shape (out, in), the diagonal has 'in' elements.
             st['importance'] = torch.zeros(p.shape[-1], device=p.device)
@@ -97,7 +100,7 @@ class ADMM(torch.optim.Optimizer):
 
         # Initial projection for 'split' uses the initial importance (zeros)
         z0 = self.projection(
-            [p.detach()], st['sparsity'], self.prune_n, self.prune_m, init_importance, comparison_group=self.comparison_group
+            [p.detach()], st['sparsity'], self.prune_n, self.prune_m, [init_importance], comparison_group=self.comparison_group
         )[0]
         st['split'] = z0.to(device=p.device)
 
@@ -110,10 +113,12 @@ class ADMM(torch.optim.Optimizer):
                         self._lazy_init_admm_state(w)
                         
                         p_sparsity = self.state[w]['sparsity']
-                        p_importance = self.state[w]['importance']
+                        p_importance = None
+                        if self.projection_mode != 'identity':
+                            p_importance = self.state[w]['importance']
                         
                         final_weight = self.projection(
-                            [w.detach()], p_sparsity, self.prune_n, self.prune_m, p_importance, self.comparison_group
+                            [w.detach()], p_sparsity, self.prune_n, self.prune_m, [p_importance], self.comparison_group
                         )[0]
                         w.data.copy_(final_weight)
 
@@ -159,7 +164,7 @@ class ADMM(torch.optim.Optimizer):
                                 if self.importance_ema > 0:
                                     st['importance'].mul_(self.importance_ema).add_(current_importance, alpha=1 - self.importance_ema)
                                 else:
-                                    st['importance'].copy_(current_importance)
+                                    st['importance'].copy4_(current_importance)
                                 importance_matrix_i = st['importance']
                             
                             elif self.projection_mode == 'activation':
@@ -169,14 +174,34 @@ class ADMM(torch.optim.Optimizer):
 
                             z_new_i = self.projection(
                                 [z_input_i], p_sparsity, self.prune_n, self.prune_m,
-                                importance_matrix_i, comparison_group=self.comparison_group
+                                [importance_matrix_i], comparison_group=self.comparison_group
                             )[0]
                             
                             u_new_i = dual.detach() + self.alpha * (w.detach() - z_new_i)
                             
-                            old_mask = (split == 0).detach().cpu()
-                            new_mask = (z_new_i == 0).detach().cpu()
-                            self.mask_diff += (torch.sum(old_mask != new_mask) / split.numel()).item()
+                            ## if Distributed
+                            if isinstance(split,DTensor):
+                                old_mask_local = split.to_local()
+                                new_mask_local = z_new_i.to_local()
+
+                                old_zero = (old_mask_local == 0)
+                                new_zero = (new_mask_local == 0)
+                                
+                                flip_local = (old_zero ^ new_zero).sum()
+                                numel_local = torch.tensor(old_mask_local.numel(),device = old_mask_local.device)
+
+                                dist.all_reduce(flip_local, op=dist.ReduceOp.SUM)
+                                dist.all_reduce(numel_local, op=dist.ReduceOp.SUM)
+
+                            else:
+                                old_mask = (split == 0).detach().cpu()
+                                new_mask = (z_new_i == 0).detach().cpu()
+
+                                flip_local = (old_mask ^ new_mask).sum()
+                                numel_local = torch.tensor(old_mask.numel(), device=old_mask.device)
+
+                            mask_diff = (flip_local.float() / numel_local.float()).item()
+                            self.mask_diff += mask_diff
 
                             dual.copy_(u_new_i)
                             split.copy_(z_new_i)
@@ -192,6 +217,8 @@ class ADMM(torch.optim.Optimizer):
         This is useful for logging or monitoring changes in sparsity.
         """
         return self.mask_diff
+
+### TODO: UPDATE SAFE
 class SAFE(torch.optim.Optimizer):
     def __init__(self, 
                 param_groups,

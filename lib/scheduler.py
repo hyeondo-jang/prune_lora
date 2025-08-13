@@ -1,6 +1,7 @@
 import math
 from absl import logging
-        
+
+##TODO: Fix schedulers for state-ful admm compatibility, and distributed training
 class PenaltyScheduler:
 
     def __init__(self, optimizer,initial_lmda, final_lmda, total_steps, mu=1.5, tau_incr=2, tau_decr=2, mode='linear', splits=None):
@@ -33,7 +34,7 @@ class PenaltyScheduler:
         for group in self.optimizer.param_groups:
             if group.get('admm', False):
                 group['lmda'] = new_lmda
-                logging.info(f"Updated lmda to {new_lmda} for group {group['name']} at step {self.step_count}")
+                # logging.info(f"Updated lmda to {new_lmda} for group {group['name']} at step {self.step_count}")
             
     def get_lmda(self, r_primal_norms=None, r_dual_norms=None, supp_change_rates=None):
         """Calculate the current lmda based on the mode."""
@@ -101,7 +102,7 @@ class SparsityScheduler:
         self.step_count += 1
         self.step_count = min(self.step_count, self.final_step)
         self.optimizer.sparsity = self.get_sparsity()
-        logging.info(f"Updated sparsity to {self.optimizer.sparsity} at step {self.step_count}")
+        # logging.info(f"Updated sparsity to {self.optimizer.sparsity} at step {self.step_count}")
 
 
     def get_sparsity(self):

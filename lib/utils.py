@@ -3,7 +3,9 @@ import torch.nn as nn
 import logging
 from transformers import AutoModelForCausalLM, EvalPrediction
 import math
-
+from torch.distributed.tensor import DTensor, Replicate, distribute_tensor, Shard
+import torch.distributed as dist
+from typing import Optional, List
 def get_llm(
     model_name:str, 
     seqlen:int=2048
@@ -28,102 +30,258 @@ def get_llm(
     model.seqlen = seqlen
     return model
 
-def projection(
-    w: list[torch.Tensor],
+def _as_dense_a(a):
+    """Convert importance matrix to dense tensor if it is DTensor."""
+    if a is None:
+        return None
+    if isinstance(a, DTensor):
+        return a.redistribute(placements=[Replicate()]).to_local()
+    return a
+
+def _a_to_local_if_needed(a):
+    """Return local shard or the tensor itself."""
+    if a is None:
+        return None
+    if isinstance(a, DTensor):
+        return a.to_local()
+    return a
+
+def _can_do_local(placements, comparison_group, prune_n, prune_m) -> bool:
+    """
+    Determine if projection can be computed locally without replication.
+    - n:m pattern is conservatively treated as global.
+    - Row-wise pruning is local if Shard(0) (output-dim sharding).
+    - Column-wise pruning is local if Shard(1) (input-dim sharding).
+    """
+    if prune_n or prune_m:
+        return False
+    if not placements:
+        return False
+    p = placements[0]
+    if comparison_group == "row" and isinstance(p, Shard) and getattr(p, "dim", 0) == 0:
+        return True
+    if comparison_group == "column" and isinstance(p, Shard) and getattr(p, "dim", 1) == 1:
+        return True
+    return False
+
+
+def _proj_impl_dense(
+    weight: torch.Tensor,
+    a: Optional[torch.Tensor],
     sparsity: float,
-    prune_n: int =0,
+    prune_n: int,
+    prune_m: int,
+    comparison_group: str,
+) -> torch.Tensor:
+    """
+    Projection core for dense tensors.
+    - Works entirely on local tensor (no communication).
+    - Supports unstructured and n:m semi-structured sparsity.
+    - comparison_group:
+        'layer'  : global threshold (within this tensor)
+        'column' : prune k smallest entries per column
+        'row'    : prune k smallest entries per row
+    """
+    device = weight.device
+    new_z = weight.detach().clone()
+    z_metric = weight.abs()
+    if a is not None:
+        z_metric = z_metric * a  # Broadcast-compatible
+
+    if prune_n != 0 and prune_m != 0:
+        # n:m semi-structured pruning (column-block based)
+        z_mask = torch.zeros_like(new_z, dtype=torch.bool, device=device)
+        cols = z_metric.shape[1]
+        for ii in range(0, cols, prune_m):
+            blk = z_metric[:, ii:ii + prune_m].float()
+            if blk.numel() == 0:
+                continue
+            k = min(prune_n, blk.shape[1])
+            if k <= 0:
+                continue
+            # Select k smallest entries per row in the block
+            _, idxs = torch.topk(blk, k=k, dim=1, largest=False)
+            z_mask.scatter_(1, ii + idxs, True)
+        new_z[z_mask] = 0
+        return new_z
+
+    # ---- Unstructured sparsity ----
+    if comparison_group == "layer":
+        # Global threshold within this tensor
+        k = int(new_z.numel() * sparsity)
+        if k > 0:
+            flat_sorted = torch.sort(z_metric.flatten(), stable=True)[0]
+            kth = flat_sorted[min(k - 1, flat_sorted.numel() - 1)]
+            new_z[z_metric <= kth] = 0
+        return new_z
+
+    elif comparison_group == "column":
+        # Prune per column: smallest k rows
+        num_rows_to_prune_per_col = int(new_z.shape[0] * sparsity)
+        if num_rows_to_prune_per_col > 0:
+            z_mask = torch.zeros_like(new_z, dtype=torch.bool, device=device)
+            _, idx = torch.topk(z_metric, k=num_rows_to_prune_per_col, dim=0, largest=False)
+            z_mask.scatter_(0, idx, True)
+            new_z[z_mask] = 0
+        return new_z
+
+    else:  # 'row'
+        # Prune per row: smallest k columns
+        num_cols_to_prune_per_row = int(new_z.shape[1] * sparsity)
+        if num_cols_to_prune_per_row > 0:
+            z_mask = torch.zeros_like(new_z, dtype=torch.bool, device=device)
+            _, idx = torch.topk(z_metric, k=num_cols_to_prune_per_row, dim=1, largest=False)
+            z_mask.scatter_(1, idx, True)
+            new_z[z_mask] = 0
+        return new_z
+
+def projection(
+    w: List[torch.Tensor],
+    sparsity: float,
+    prune_n: int = 0,
     prune_m: int = 0,
-    importance_matrix: list[torch.Tensor] = None,
-    comparison_group: str = 'layer'
-) -> list[torch.Tensor]:
+    importance_matrix: Optional[List[torch.Tensor]] = None,
+    comparison_group: str = "layer",
+) -> List[torch.Tensor]:
     """
-    Args:
-        w (list[torch.Tensor]): list of weights (nxm) to be projected
-        sparsity (float): target sparsity
-        prune_n (int): n for n:m semi-structured sparsity
-        prune_m (int): m for n:m semi-structured sparsity
-        importance_matrix (list[torch.Tensor], optional): importance matrix (diag(mxm)) or vector (1xm) for each weight
-        comparison_group (str): 'layer' for layer-wise pruning metric comparison, 'column' for column-wise(input), 'row' for row-wise(output) pruning metric comparison.
-    Returns:
-        new_zs (list[torch.Tensor]): list of projected weights
+    Distributed/DTensor-friendly projection.
+    If weight is a DTensor:
+      - If sharding dim matches comparison_group, run locally (no comms).
+      - Else Replicate → project → redistribute to original sharding.
     """
-    
-    new_zs = []
-    if importance_matrix is not None: # Generalized projection, SAFE+
-        for weight,a in zip(w,importance_matrix):
-            new_z = weight.data.clone().detach()
-            z_metric = torch.abs(weight) * a
-            if prune_n != 0: # n:m semi-structured sparsity
-                z_mask = (torch.zeros_like(new_z)==1)
-                for ii in range(z_metric.shape[1]):
-                    if ii % prune_m == 0:
-                        tmp = z_metric[:,ii:(ii+prune_m)].float()
-                        z_mask.scatter_(1,ii+torch.topk(tmp, prune_n,dim=1, largest=False)[1], True)
-            else: # unstructured sparsity
-                z_mask = (torch.zeros_like(new_z)==1)
-                if comparison_group == 'layer':
-                    thresh = torch.sort(z_metric.flatten().cuda())[0][int(new_z.numel()*sparsity)].cpu()                
-                    z_mask = (z_metric<=thresh)
-                elif comparison_group == 'column':
-                    num_rows_to_prune_per_col = int(new_z.shape[0]*sparsity)
-                    if num_rows_to_prune_per_col > 0:
-                        _, indices_to_prune = torch.topk(
-                            z_metric,
-                            k=num_rows_to_prune_per_col,
-                            dim=0,
-                            largest=False
-                        )
-                    z_mask.scatter_(0,indices_to_prune, True)
-                elif comparison_group == 'row':
-                    num_cols_to_prune_per_row = int(new_z.shape[1]*sparsity)
-                    if num_cols_to_prune_per_row > 0:
-                        _, indices_to_prune = torch.topk(
-                            z_metric,
-                            k=num_cols_to_prune_per_row,
-                            dim=1,
-                            largest=False
-                        )
-                    z_mask.scatter_(1,indices_to_prune, True)
-            new_z[z_mask] = 0
-            new_zs.append(new_z)
-    else: # Standard projection, SAFE
-        for weight in w:
-            new_z = weight.data.clone().detach()
-            z_metric = torch.abs(weight)
-            if prune_n != 0: # n:m semi-structured sparsity
-                z_mask = (torch.zeros_like(new_z)==1)
-                for ii in range(z_metric.shape[1]):
-                    if ii % prune_m == 0:
-                        tmp = z_metric[:,ii:(ii+prune_m)].float()
-                        z_mask.scatter_(1,ii+torch.topk(tmp, prune_n,dim=1, largest=False)[1], True)
-            else: # unstructured sparsity
-                z_mask = (torch.zeros_like(new_z)==1)
-                if comparison_group == 'layer':
-                    thresh = torch.sort(z_metric.flatten().cuda())[0][int(new_z.numel()*sparsity)].cpu()                
-                    z_mask = (z_metric<=thresh)
-                elif comparison_group == 'column':
-                    num_rows_to_prune_per_col = int(new_z.shape[1]*sparsity)
-                    if num_rows_to_prune_per_col > 0:
-                        _, indices_to_prune = torch.topk(
-                            z_metric,
-                            k=num_rows_to_prune_per_col,
-                            dim=1,
-                            largest=False
-                        )
-                    z_mask.scatter_(1,indices_to_prune, True)
-                elif comparison_group == 'row':
-                    num_cols_to_prune_per_row = int(new_z.shape[0]*sparsity)
-                    if num_cols_to_prune_per_row > 0:
-                        _, indices_to_prune = torch.topk(
-                            z_metric,
-                            k=num_cols_to_prune_per_row,
-                            dim=0,
-                            largest=False
-                        )
-                    z_mask.scatter_(0,indices_to_prune, True)
-            new_z[z_mask] = 0
-            new_zs.append(new_z)
-    return new_zs
+    assert comparison_group in ("layer", "column", "row")
+    use_a = importance_matrix is not None
+    if use_a:
+        assert len(importance_matrix) == len(w)
+
+    out: List[torch.Tensor] = []
+    for i, weight in enumerate(w):
+        a = importance_matrix[i] if use_a else None
+
+        # Dense tensor path
+        if not isinstance(weight, DTensor):
+            new_dense = _proj_impl_dense(weight, _as_dense_a(a), sparsity, prune_n, prune_m, comparison_group)
+            out.append(new_dense)
+            continue
+
+        mesh = weight.device_mesh
+        orig_places = weight.placements
+        global_shape = tuple(weight.shape)
+
+        if isinstance(a, DTensor) and a.placements != orig_places:
+            a = a.redistribute(placements=orig_places)
+
+        if _can_do_local(orig_places, comparison_group, prune_n, prune_m):
+            w_local = weight.to_local().detach().clone()
+            a_local = _a_to_local_if_needed(a)
+            new_local = _proj_impl_dense(w_local, a_local, sparsity, prune_n, prune_m, comparison_group)
+            new_dt = DTensor.from_local(new_local, device_mesh=mesh, placements=orig_places, size=global_shape)
+            out.append(new_dt)
+        else:
+            rep = weight.redistribute(placements=[Replicate()])
+            dense_w = rep.to_local()
+            dense_a = _a_to_local_if_needed(a)
+            new_dense = _proj_impl_dense(dense_w, dense_a, sparsity, prune_n, prune_m, comparison_group)
+            new_dt = distribute_tensor(new_dense, device_mesh=mesh, placements=orig_places)
+            out.append(new_dt)
+    return out
+
+# def projection(
+#     w: list[torch.Tensor],
+#     sparsity: float,
+#     prune_n: int =0,
+#     prune_m: int = 0,
+#     importance_matrix: list[torch.Tensor] = None,
+#     comparison_group: str = 'layer'
+# ) -> list[torch.Tensor]:
+#     """
+#     Args:
+#         w (list[torch.Tensor]): list of weights (nxm) to be projected
+#         sparsity (float): target sparsity
+#         prune_n (int): n for n:m semi-structured sparsity
+#         prune_m (int): m for n:m semi-structured sparsity
+#         importance_matrix (list[torch.Tensor], optional): importance matrix (diag(mxm)) or vector (1xm) for each weight
+#         comparison_group (str): 'layer' for layer-wise pruning metric comparison, 'column' for column-wise(input), 'row' for row-wise(output) pruning metric comparison.
+#     Returns:
+#         new_zs (list[torch.Tensor]): list of projected weights
+#     """
+#     new_zs = []
+#     if importance_matrix is not None: # Generalized projection, SAFE+
+#         for weight,a in zip(w,importance_matrix):
+#             new_z = weight.data.clone().detach()
+#             z_metric = torch.abs(weight) * a
+#             if prune_n != 0: # n:m semi-structured sparsity
+#                 z_mask = (torch.zeros_like(new_z)==1)
+#                 for ii in range(z_metric.shape[1]):
+#                     if ii % prune_m == 0:
+#                         tmp = z_metric[:,ii:(ii+prune_m)].float()
+#                         z_mask.scatter_(1,ii+torch.topk(tmp, prune_n,dim=1, largest=False)[1], True)
+#             else: # unstructured sparsity
+#                 z_mask = (torch.zeros_like(new_z)==1)
+#                 if comparison_group == 'layer':
+#                     thresh = torch.sort(z_metric.flatten().cuda())[0][int(new_z.numel()*sparsity)].cpu()                
+#                     z_mask = (z_metric<=thresh)
+#                 elif comparison_group == 'column':
+#                     num_rows_to_prune_per_col = int(new_z.shape[0]*sparsity)
+#                     if num_rows_to_prune_per_col > 0:
+#                         _, indices_to_prune = torch.topk(
+#                             z_metric,
+#                             k=num_rows_to_prune_per_col,
+#                             dim=0,
+#                             largest=False
+#                         )
+#                     z_mask.scatter_(0,indices_to_prune, True)
+#                 elif comparison_group == 'row':
+#                     num_cols_to_prune_per_row = int(new_z.shape[1]*sparsity)
+#                     if num_cols_to_prune_per_row > 0:
+#                         _, indices_to_prune = torch.topk(
+#                             z_metric,
+#                             k=num_cols_to_prune_per_row,
+#                             dim=1,
+#                             largest=False
+#                         )
+#                     z_mask.scatter_(1,indices_to_prune, True)
+#             new_z[z_mask] = 0
+            
+#             new_zs.append(new_z)
+#     else: # Standard projection, SAFE
+#         for weight in w:
+#             new_z = weight.data.clone().detach()
+#             z_metric = torch.abs(weight)
+#             if prune_n != 0: # n:m semi-structured sparsity
+#                 z_mask = (torch.zeros_like(new_z)==1)
+#                 for ii in range(z_metric.shape[1]):
+#                     if ii % prune_m == 0:
+#                         tmp = z_metric[:,ii:(ii+prune_m)].float()
+#                         z_mask.scatter_(1,ii+torch.topk(tmp, prune_n,dim=1, largest=False)[1], True)
+#             else: # unstructured sparsity
+#                 z_mask = (torch.zeros_like(new_z)==1)
+#                 if comparison_group == 'layer':
+#                     thresh = torch.sort(z_metric.flatten().cuda())[0][int(new_z.numel()*sparsity)].cpu()                
+#                     z_mask = (z_metric<=thresh)
+#                 elif comparison_group == 'column':
+#                     num_rows_to_prune_per_col = int(new_z.shape[1]*sparsity)
+#                     if num_rows_to_prune_per_col > 0:
+#                         _, indices_to_prune = torch.topk(
+#                             z_metric,
+#                             k=num_rows_to_prune_per_col,
+#                             dim=1,
+#                             largest=False
+#                         )
+#                     z_mask.scatter_(1,indices_to_prune, True)
+#                 elif comparison_group == 'row':
+#                     num_cols_to_prune_per_row = int(new_z.shape[0]*sparsity)
+#                     if num_cols_to_prune_per_row > 0:
+#                         _, indices_to_prune = torch.topk(
+#                             z_metric,
+#                             k=num_cols_to_prune_per_row,
+#                             dim=0,
+#                             largest=False
+#                         )
+#                     z_mask.scatter_(0,indices_to_prune, True)
+#             new_z[z_mask] = 0
+#             new_zs.append(new_z)
+#     return new_zs
  
 def find_layers(
     module: nn.Module,
