@@ -65,7 +65,9 @@ def main(argv):
     torch.cuda.set_device(device)
 
     if not (FLAGS.prune_method == 'global_admm'):
-            model = model.to(device)
+        model = model.to(device)
+    else:
+        model = model.to('cpu')
     
     logging.info(f"Process {local_rank} uses device {device}")
     if FLAGS.sparsity_ratio != 0:
@@ -144,7 +146,7 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    flags.DEFINE_string('model', 'meta-llama/Llama-3.2-3B', 'model to prune.')
+    flags.DEFINE_string('model', 'meta-llama/Llama-2-13b-hf', 'model to prune.')
     flags.DEFINE_integer('seqlen', 2048, 'Sequence length for the model.')
     flags.DEFINE_integer('seed', 0, 'Seed for sampling the calibration data.')
     flags.DEFINE_integer('nsamples', 128, 'Number of calibration samples.')
@@ -152,6 +154,7 @@ if __name__ == '__main__':
     flags.DEFINE_enum('sparsity_type', "unstructured", ["unstructured", "4:8", "2:4"], 'Type of sparsity.')
     flags.DEFINE_enum('prune_method', "global_admm", ["magnitude", "wanda", "sparsegpt", "safe", "alps","global_admm", 'dense'], 'Pruning method.')
     flags.DEFINE_enum('dataset', 'c4', ["c4", "wikitext2"], 'Calibration dataset.')
+    flags.DEFINE_string('data_path', '/home/kwanheelee/.cache/huggingface/hub/datasets--allenai--c4/snapshots/1588ec454efa1a09f29cd18ddd04fe05fc8653a2', 'Path to local raw dataset directory (e.g., ~/.cache/huggingface/hub/dataset). Overrides online download.')
     
     # SAFE hyperparams
     flags.DEFINE_float('lmda', 1e-3, 'Penalty parameter for SAFE dual update.')
@@ -178,7 +181,7 @@ if __name__ == '__main__':
     # Training Loop Config
     flags.DEFINE_integer('admm_epochs', 1, 'Number of epochs for ADMM training.')
     flags.DEFINE_integer('admm_steps', 10, 'Max steps for ADMM training. Overrides admm_epochs if > 0.')
-    flags.DEFINE_integer('admm_batch_size', 4, 'Batch size for ADMM training, per device.')
+    flags.DEFINE_integer('admm_batch_size', 2, 'Batch size for ADMM training, per device.')
     flags.DEFINE_integer('admm_gradient_accumulation_steps', 1, 'Gradient accumulation steps for ADMM.')
     flags.DEFINE_bool('admm_gradient_checkpointing', False, 'Use gradient checkpointing for ADMM training. Set False when using FSDP')
     flags.DEFINE_float('admm_lr', 2e-4, 'Learning rate for ADMM base optimizer.')
@@ -204,7 +207,7 @@ if __name__ == '__main__':
     flags.DEFINE_bool('admm_decouple', False, 'Decouple proximal update in ADMM (for Adam).')
     flags.DEFINE_enum('loss_type', 'ntp', ['rem', 'ntp'], "Loss type for ADMM training ('rem' for reconstruction, 'ntp' for next token prediction).")
     flags.DEFINE_bool('normalize_grad', False, 'Whether to normalize gradients during ADMM training. Note that gradient normalization is only performed with respect to the gradients of the training objective.')
-    flags.DEFINE_bool('admm_adaptive_sparsity', True, 'Whether to use adaptive sparsity based on sensitivity scores in ADMM.')
+    flags.DEFINE_bool('admm_adaptive_sparsity', False, 'Whether to use adaptive sparsity based on sensitivity scores in ADMM.')
     flags.DEFINE_integer('admm_adaptive_sparsity_samples', 32, 'Whether to use adaptive sparsity based on sensitivity scores in ADMM.')
     flags.DEFINE_bool('admm_adaptive_sparsity_smooth', False, 'Whether to smooth the adaptive sparsity scores in ADMM.')
     flags.DEFINE_float('admm_adaptive_sparsity_smooth_temperature', 2, 'Alpha for smoothing the adaptive sparsity scores in ADMM.')

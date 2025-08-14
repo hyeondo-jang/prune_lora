@@ -18,22 +18,38 @@ from transformers import AutoTokenizer
 # The main entry point is `get_dataset`, which returns a `datasets.Dataset` object.
 # =====================================================================================
 
-def _get_raw_dataset(dataset_name, data_type="train"):
-    """Loads the raw text data from Hugging Face datasets."""
+def _get_raw_dataset(dataset_name, data_type="train", data_path=None):
+    """
+    Loads the raw text data.
+    If `data_path` is provided, it loads specific json.gz files from that local directory.
+    Otherwise, it downloads from the Hugging Face Hub.
+    """
     if "c4" in dataset_name.lower():
         split_name = "train" if data_type == "train" else "validation"
-        data_files = {
+        data_files_config = {
             "train": "en/c4-train.00000-of-01024.json.gz",
             "validation": "en/c4-validation.00000-of-00008.json.gz"
         }
-        return load_dataset(
-            'allenai/c4',
-            data_files={split_name: data_files[split_name]},
-            split=split_name,
-            trust_remote_code=True,
-            cache_dir='~/.cache/huggingface/datasets'
-        )
+        if data_path:
+            logging.info(f"Loading C4 raw data from local path: {data_path}")
+            files_to_load = {split: os.path.join(data_path, fname) for split, fname in data_files_config.items()}
+            return load_dataset(
+                'json',
+                data_files={split_name: files_to_load[split_name]},
+                split=split_name,
+            )
+        else:
+            logging.info("Loading C4 raw data from Hugging Face Hub.")
+            return load_dataset(
+                'allenai/c4',
+                data_files={split_name: data_files_config[split_name]},
+                split=split_name,
+                trust_remote_code=True,
+                cache_dir='~/.cache/huggingface/datasets'
+            )
+            
     elif "wikitext2" in dataset_name.lower():
+        # ... (wikitext2 및 ptb 로직은 변경 없음)
         split_name = "train" if data_type == "train" else "test"
         return load_dataset('wikitext', 'wikitext-2-raw-v1', split=split_name, trust_remote_code=True)
     elif "ptb" in dataset_name.lower():
@@ -43,7 +59,7 @@ def _get_raw_dataset(dataset_name, data_type="train"):
         raise ValueError(f"Unsupported dataset: {dataset_name}")
 
 def _process_and_tokenize(raw_dataset, dataset_name, tokenizer, nsamples, seqlen, seed):
-    """Tokenizes raw text data into fixed-length sequences."""
+    # ... (이 함수는 변경 없음)
     random.seed(seed)
     
     all_tokens = []
@@ -90,35 +106,32 @@ def get_dataset(
     seqlen: int,
     data_type: str = "train",
     cache_dir: str = "dataset",
-    save_to_cache: bool = False
+    save_to_cache: bool = False,
+    data_path: str = None
 ) -> Dataset:
     """
-    Creates or loads a tokenized dataset from cache.
-    Uses the library's native `save_to_disk` and `load_from_disk` for safe and efficient caching.
+    Creates or loads a tokenized dataset.
+    The `data_path` argument now controls where the RAW data is loaded from.
+    The processed (tokenized) data is still cached locally for speed.
     """
     safe_model_name = tokenizer.name_or_path.replace("/", "_")
-    # --- 캐시 경로를 파일이 아닌 디렉토리로 변경 ---
-    data_dir = Path(cache_dir) / safe_model_name / data_type / f"{dataset_name}_{nsamples}_{seqlen}"
+    # data_path가 제공되었는지를 반영하는 캐시 디렉토리 이름 생성
+    path_suffix = f"local_{Path(data_path).name}" if data_path else "hub"
+    data_dir = Path(cache_dir) / safe_model_name / data_type / f"{dataset_name}_{nsamples}_{seqlen}_{path_suffix}"
     
-    # Check cache by looking for the directory
-    # if data_dir.exists():
-    #     logging.info(f"Loading cached {data_type} dataset from {data_dir}")
-    #     # --- torch.load 대신 load_from_disk 사용 ---
-    #     return load_from_disk(str(data_dir))
+    if data_dir.exists():
+        logging.info(f"Loading cached processed dataset from {data_dir}")
+        return load_from_disk(str(data_dir))
 
-
-
-    raw_dataset = _get_raw_dataset(dataset_name, data_type)
+    logging.info(f"No valid processed cache found. Generating dataset...")
+    raw_dataset = _get_raw_dataset(dataset_name, data_type, data_path=data_path)
     dataset = _process_and_tokenize(raw_dataset, dataset_name, tokenizer, nsamples, seqlen, seed)
 
     if save_to_cache:
-        logging.info(f"No valid cache found. Generating {data_type} dataset for {dataset_name}...")
-        data_dir.mkdir(parents=True, exist_ok=True) # 디렉토리 생성
-        logging.info(f"Saving {data_type} dataset to {data_dir}")
-        # --- torch.save 대신 save_to_disk 사용 ---
+        data_dir.mkdir(parents=True, exist_ok=True)
+        logging.info(f"Saving processed dataset to {data_dir}")
         dataset.save_to_disk(str(data_dir))
         
-        # 메타데이터는 여전히 유용하므로 유지
         metadata_file = data_dir / "metadata.json"
         metadata = {
             'tokenizer_name': tokenizer.name_or_path,
@@ -127,6 +140,7 @@ def get_dataset(
             'nsamples': nsamples,
             'seqlen': seqlen,
             'created_at': datetime.now().isoformat(),
+            'source_data_path': data_path if data_path else 'Hugging Face Hub'
         }
         with open(metadata_file, 'w') as f:
             json.dump(metadata, f, indent=2)

@@ -788,7 +788,8 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         seed=FLAGS.seed,
         seqlen=model.seqlen,
         data_type="train",
-        save_to_cache=FLAGS.admm_save_inputs
+        save_to_cache=FLAGS.admm_save_inputs,
+        data_path=FLAGS.data_path
     )
     valid_inputs = get_dataset(
         dataset_name=FLAGS.dataset,
@@ -797,7 +798,8 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         seed=FLAGS.seed,
         seqlen=model.seqlen,
         data_type="validation", # Use a different data_type for eval
-        save_to_cache=FLAGS.admm_save_inputs
+        save_to_cache=FLAGS.admm_save_inputs,
+        data_path=FLAGS.data_path
     )
 
     # --- On-the-fly REM Label Computation for Distributed Training ---
