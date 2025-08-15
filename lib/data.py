@@ -24,6 +24,7 @@ def _get_raw_dataset(dataset_name, data_type="train", data_path=None):
     If `data_path` is provided, it loads specific json.gz files from that local directory.
     Otherwise, it downloads from the Hugging Face Hub.
     """
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
     if "c4" in dataset_name.lower():
         split_name = "train" if data_type == "train" else "validation"
         data_files_config = {
@@ -31,7 +32,8 @@ def _get_raw_dataset(dataset_name, data_type="train", data_path=None):
             "validation": "en/c4-validation.00000-of-00008.json.gz"
         }
         if data_path:
-            logging.info(f"Loading C4 raw data from local path: {data_path}")
+            if local_rank == 0:
+                logging.info(f"Loading C4 raw data from local path: {data_path}")
             files_to_load = {split: os.path.join(data_path, fname) for split, fname in data_files_config.items()}
             return load_dataset(
                 'json',
@@ -39,7 +41,8 @@ def _get_raw_dataset(dataset_name, data_type="train", data_path=None):
                 split=split_name,
             )
         else:
-            logging.info("Loading C4 raw data from Hugging Face Hub.")
+            if local_rank == 0:
+                logging.info("Loading C4 raw data from Hugging Face Hub.")
             return load_dataset(
                 'allenai/c4',
                 data_files={split_name: data_files_config[split_name]},
@@ -114,22 +117,26 @@ def get_dataset(
     The `data_path` argument now controls where the RAW data is loaded from.
     The processed (tokenized) data is still cached locally for speed.
     """
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
     safe_model_name = tokenizer.name_or_path.replace("/", "_")
     # data_path가 제공되었는지를 반영하는 캐시 디렉토리 이름 생성
     path_suffix = f"local_{Path(data_path).name}" if data_path else "hub"
     data_dir = Path(cache_dir) / safe_model_name / data_type / f"{dataset_name}_{nsamples}_{seqlen}_{path_suffix}"
     
     if data_dir.exists():
-        logging.info(f"Loading cached processed dataset from {data_dir}")
+        if local_rank == 0:
+            logging.info(f"Loading cached processed dataset from {data_dir}")
         return load_from_disk(str(data_dir))
 
-    logging.info(f"No valid processed cache found. Generating dataset...")
+    if local_rank == 0:
+        logging.info(f"No valid processed cache found. Generating dataset...")
     raw_dataset = _get_raw_dataset(dataset_name, data_type, data_path=data_path)
     dataset = _process_and_tokenize(raw_dataset, dataset_name, tokenizer, nsamples, seqlen, seed)
 
     if save_to_cache:
         data_dir.mkdir(parents=True, exist_ok=True)
-        logging.info(f"Saving processed dataset to {data_dir}")
+        if local_rank == 0:
+            logging.info(f"Saving processed dataset to {data_dir}")
         dataset.save_to_disk(str(data_dir))
         
         metadata_file = data_dir / "metadata.json"
@@ -175,7 +182,9 @@ def get_loaders(
             - trainloader: A list of (input_tensor, target_tensor) tuples.
             - testenc: A TokenizerWrapper object containing test data.
     """
-    logging.info("Using `get_loaders` (legacy compatibility mode).")
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    if local_rank == 0:
+        logging.info("Using `get_loaders` (legacy compatibility mode).")
 
     # 1. Use the new, unified function to get the training dataset
     train_dataset = get_dataset(
