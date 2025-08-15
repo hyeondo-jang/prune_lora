@@ -734,6 +734,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         remove_unused_columns=False,
         do_train=True,
         do_eval=True,
+        log_level=FLAGS.log_level,
         # admm arguments
         admm_adaptive_sparsity_smooth=FLAGS.admm_adaptive_sparsity_smooth,
         admm_adaptive_sparsity_smooth_temperature=FLAGS.admm_adaptive_sparsity_smooth_temperature,

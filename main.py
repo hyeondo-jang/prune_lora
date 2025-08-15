@@ -146,7 +146,7 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    flags.DEFINE_string('model', 'meta-llama/Llama-2-13b-hf', 'model to prune.')
+    flags.DEFINE_string('model', 'meta-llama/Llama-2-7b-hf', 'model to prune.')
     flags.DEFINE_integer('seqlen', 2048, 'Sequence length for the model.')
     flags.DEFINE_integer('seed', 0, 'Seed for sampling the calibration data.')
     flags.DEFINE_integer('nsamples', 128, 'Number of calibration samples.')
@@ -155,7 +155,7 @@ if __name__ == '__main__':
     flags.DEFINE_enum('prune_method', "global_admm", ["magnitude", "wanda", "sparsegpt", "safe", "alps","global_admm", 'dense'], 'Pruning method.')
     flags.DEFINE_enum('dataset', 'c4', ["c4", "wikitext2"], 'Calibration dataset.')
     flags.DEFINE_string('data_path', '/home/kwanheelee/.cache/huggingface/hub/datasets--allenai--c4/snapshots/1588ec454efa1a09f29cd18ddd04fe05fc8653a2', 'Path to local raw dataset directory (e.g., ~/.cache/huggingface/hub/dataset). Overrides online download.')
-    
+    flags.DEFINE_string('log_level','info','Logging level. By default, use info for wandb, warning for debugging.')
     # SAFE hyperparams
     flags.DEFINE_float('lmda', 1e-3, 'Penalty parameter for SAFE dual update.')
     flags.DEFINE_integer('batch_size', 4, 'Batch size for SAFE.')
@@ -214,7 +214,7 @@ if __name__ == '__main__':
     
     # Logging & Evaluation
     flags.DEFINE_integer('admm_logging_steps', 1, 'Logging step interval for ADMM training.')
-    flags.DEFINE_integer('admm_eval_steps', 100, 'Evaluation step interval for ADMM training.')
+    flags.DEFINE_integer('admm_eval_steps', 1, 'Evaluation step interval for ADMM training.')
 
 
 
