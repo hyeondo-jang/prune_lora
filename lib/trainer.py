@@ -1,16 +1,17 @@
-
 import math
 import os
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union, Callable
 from absl import logging
 import wandb
+import contextlib
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset, RandomSampler
 import torch.distributed as dist
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 import shutil
 
 import numpy as np
@@ -209,9 +210,7 @@ class ADMMTrainer(Trainer):
         
         batches_processed = 0
         for batch_idx, batch in enumerate(train_dataloader):
-            # ...
             self.training_step(self.model, self._prepare_inputs(batch))
-            # ...
             batches_processed += 1
 
         # --- Step 2: Calculate block-level sensitivity scores using parameter names ---
@@ -393,7 +392,7 @@ class ADMMTrainer(Trainer):
                     projection_fn= projection,
                     alpha=self.args.admm_alpha,  # Over-relaxation parameter
                     lmda=self.args.admm_lmda, sparsity=self.args.sparsity_ratio, interval=self.args.admm_interval, 
-                    lr=self.args.learning_rate, prune_n=self.args.prune_n, prune_m=self.args.prune_m, comparison_group=self.args.admm_projection_comparison_group,
+                    lr=self.args.learning_rate, prune_n=self.args.prune_n, prune_m=self.args.admm_projection_comparison_group,
                     projection_mode= self.args.admm_projection_mode,
                     importance_ema=self.args.admm_importance_ema,
                     base_optimizer = base_optimizer,
@@ -604,7 +603,7 @@ class ADMMTrainer(Trainer):
         prediction_loss_only = prediction_loss_only if prediction_loss_only is not None else args.prediction_loss_only
 
         model = self._wrap_model(self.model, training=False, dataloader=dataloader)
-
+        
         if not self.is_in_train:
             if args.fp16_full_eval: model = model.half()
             elif args.bf16_full_eval: model = model.bfloat16()
@@ -638,16 +637,25 @@ class ADMMTrainer(Trainer):
                 losses = self._nested_gather(loss.repeat(batch_size))
                 losses_host_list.append(losses)
 
+            # --- OPTIMIZATION: Accumulate CE loss components locally ---
             if logits is not None and labels is not None:
-                shift_logits = logits[..., :-1, :].contiguous()
-                shift_labels = labels[..., 1:].contiguous()
+                # Move to device for calculation
+                shift_logits = logits[..., :-1, :].contiguous().to(self.args.device)
+                shift_labels = labels[..., 1:].contiguous().to(self.args.device)
+                
+                # Use reduction='sum' to avoid averaging over potentially different batch sizes
                 loss_fct = torch.nn.CrossEntropyLoss(reduction='sum')
                 with torch.no_grad():
                     batch_ce_loss_sum = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+                    
+                    # Count valid (non-padded) tokens
                     valid_tokens_mask = shift_labels != -100
-                    batch_valid_tokens = valid_tokens_mask.sum().item()
+                    batch_valid_tokens = valid_tokens_mask.sum()
+
+                # Accumulate locally as float to reduce GPU memory pressure
                 total_ce_loss_sum += batch_ce_loss_sum.item()
-                total_valid_tokens += batch_valid_tokens
+                total_valid_tokens += batch_valid_tokens.item()
+            # --- END OPTIMIZATION ---
 
             self.control = self.callback_handler.on_prediction_step(args, self.state, self.control)
 
@@ -669,10 +677,14 @@ class ADMMTrainer(Trainer):
         # 2. Synchronize and Calculate Perplexity
         # Use a robust check for distributed environment
         if self.args.world_size > 1 and torch.distributed.is_available() and torch.distributed.is_initialized():
+            # Create tensors on the correct device for all_reduce
             total_ce_loss_sum_tensor = torch.tensor(total_ce_loss_sum, device=self.args.device)
             total_valid_tokens_tensor = torch.tensor(total_valid_tokens, device=self.args.device, dtype=torch.long)
+            
+            # Perform a single all_reduce for both values
             torch.distributed.all_reduce(total_ce_loss_sum_tensor, op=torch.distributed.ReduceOp.SUM)
             torch.distributed.all_reduce(total_valid_tokens_tensor, op=torch.distributed.ReduceOp.SUM)
+            
             total_ce_loss_sum = total_ce_loss_sum_tensor.item()
             total_valid_tokens = total_valid_tokens_tensor.item()
 
@@ -683,17 +695,21 @@ class ADMMTrainer(Trainer):
                 metrics[f"{metric_key_prefix}_perplexity"] = math.exp(mean_ce_loss)
             except OverflowError:
                 metrics[f"{metric_key_prefix}_perplexity"] = float("inf")
-
-        # # 3. Calculate W-Z Distance (only on the main process)
+        
+        # --- FSDP FIX: Perform residual calculation in a distributed manner ---
+        # No longer gathering state to rank 0. Each process calculates its local
+        # residual, and then we all_reduce the result.
+        primal_residual = self.calculate_primal_residual(
+            metric_key_prefix=metric_key_prefix
+        )
+        dual_residual = self.calculate_dual_residual(
+            metric_key_prefix=metric_key_prefix
+        )
+        # Only update metrics on the main process to avoid redundancy in logs
         if self.is_world_process_zero():
-            primal_residual = self.calculate_primal_residual(
-                metric_key_prefix=metric_key_prefix
-            )
-            dual_residual = self.calculate_dual_residual(
-                metric_key_prefix=metric_key_prefix
-            )
             metrics.update(primal_residual)
             metrics.update(dual_residual)
+        # --- END FSDP FIX ---
 
         metrics = denumpify_detensorize(metrics)
         if hasattr(self, "jit_compilation_time"):
@@ -704,65 +720,81 @@ class ADMMTrainer(Trainer):
     def calculate_primal_residual(
         self,
         metric_key_prefix: str = "eval",
-        eps: float = 1e-12,          # small constant to prevent div-by-zero
+        eps: float = 1e-12,
     ) -> Dict[str, float]:
         """
-        Compute both
-            • primal residual ‖w - z‖₂
-            • relative residual ‖w - z‖₂ / ‖w‖₂
-        for all nn.Linear layers except lm_head.
-
-        Returns
-        -------
-        dict
-            {
-            "<prefix>_primal_residual"  : float,
-            "<prefix>_relative_residual": float
-            }
+        Computes primal and relative residuals in a distributed-friendly way.
+        Each process computes residuals on its local shard of optimizer states,
+        and then results are summed across all processes via all_reduce.
         """
-        groups = self.optimizer.param_groups
-        for group in groups:
-            if group.get('admm', False):
-                weight = group['params']
-                with torch.no_grad():
-                    primal_residual = torch.sqrt(torch.sum(torch.stack([torch.norm(w.detach() - self.optimizer.state[w]['split'].detach())**2 for w in weight])))
-                    relative_residual = primal_residual / (torch.sqrt(torch.sum(torch.stack([torch.norm(w.detach())**2 for w in weight]))) + eps)
+        unwrapped_optimizer = self.optimizer.optimizer if hasattr(self.optimizer, 'optimizer') else self.optimizer
+        
+        # --- FSDP FIX: Initialize as tensors for accumulation on each process's device ---
+        local_primal_residual_sq = torch.tensor(0.0, device=self.args.device)
+        local_weight_norm_sq = torch.tensor(0.0, device=self.args.device)
+        
+        # Iterate over the local shard of optimizer states
+        for group in unwrapped_optimizer.param_groups:
+            if not group.get('admm', False): continue
+            for param in group['params']:
+                if param in unwrapped_optimizer.state:
+                    state = unwrapped_optimizer.state[param]
+                    w = param
+                    z = state['split']
+                    local_primal_residual_sq += torch.norm(w - z).pow(2)
+                    local_weight_norm_sq += torch.norm(w).pow(2)
+        
+        # Synchronize across all processes
+        if self.args.world_size > 1 and dist.is_initialized():
+            dist.all_reduce(local_primal_residual_sq, op=dist.ReduceOp.SUM)
+            dist.all_reduce(local_weight_norm_sq, op=dist.ReduceOp.SUM)
+        # --- END FSDP FIX ---
+
+        # Now all processes have the global sum. Convert to float.
+        primal_residual = torch.sqrt(local_primal_residual_sq).item()
+        relative_residual = primal_residual / (torch.sqrt(local_weight_norm_sq).item() + eps)
+
         return {
-            f"{metric_key_prefix}_primal_residual": primal_residual.item(),
-            f"{metric_key_prefix}_relative_residual": relative_residual.item(),
+            f"{metric_key_prefix}_primal_residual": primal_residual,
+            f"{metric_key_prefix}_relative_residual": relative_residual,
         }
+
     def calculate_dual_residual(
         self,
         metric_key_prefix: str = "eval",
     ) -> Dict[str, float]:
         """
-        Compute the dual residual for all nn.Linear layers except lm_head. (proj(w+u)-z)^2
-        Returns
-        -------
-        dict
-            {
-            "<prefix>_dual_residual"  : float,
-            "<prefix>_scaled_dual_residual": float
-            }
+        Computes the dual residual in a distributed-friendly way using all_reduce.
         """
-        groups = self.optimizer.param_groups
         unwrapped_optimizer = self.optimizer.optimizer if hasattr(self.optimizer, 'optimizer') else self.optimizer
+        
+        # --- FSDP FIX: Initialize as a tensor on each process's device ---
+        local_dual_residual_sq = torch.tensor(0.0, device=self.args.device)
+        lmda = self.args.admm_lmda 
 
-        for group in groups:
-            if group.get('admm', False):
-                weights = group['params']
-                lmda = group.get('lmda', self.args.admm_lmda)
-                dual_residual = 0.0
-                for w in weights:
-                    u = self.optimizer.state[w]['dual']
-                    z = self.optimizer.state[w]['split']
-                    p_sparsity = self.optimizer.state[w]['sparsity'] ## TODO: impelment importance 
-                    z_new = projection([w+u], sparsity=p_sparsity, prune_n=unwrapped_optimizer.prune_n, prune_m=unwrapped_optimizer.prune_m, comparison_group=unwrapped_optimizer.comparison_group)[0]
-                    dual_residual += torch.norm(z_new-z, p=2)**2
-                dual_residual = torch.sqrt(dual_residual)
+        # Iterate over the local shard of optimizer states
+        for group in unwrapped_optimizer.param_groups:
+            if not group.get('admm', False): continue
+            for param in group['params']:
+                if param in unwrapped_optimizer.state:
+                    state = unwrapped_optimizer.state[param]
+                    w = param
+                    u = state['dual']
+                    z = state['split']
+                    p_sparsity = state.get('sparsity', unwrapped_optimizer.sparsity)
+                    
+                    z_new = projection([w + u], sparsity=p_sparsity, prune_n=unwrapped_optimizer.prune_n, prune_m=unwrapped_optimizer.prune_m, comparison_group=unwrapped_optimizer.comparison_group)[0]
+                    local_dual_residual_sq += torch.norm(z_new - z, p=2).pow(2)
+
+        # Synchronize across all processes
+        if self.args.world_size > 1 and dist.is_initialized():
+            dist.all_reduce(local_dual_residual_sq, op=dist.ReduceOp.SUM)
+        # --- END FSDP FIX ---
+
+        dual_residual = torch.sqrt(local_dual_residual_sq).item()
         return {
-            f"{metric_key_prefix}_dual_residual": dual_residual.item(),
-            f"{metric_key_prefix}_scaled_dual_residual": lmda * dual_residual.item(),
+            f"{metric_key_prefix}_dual_residual": dual_residual,
+            f"{metric_key_prefix}_scaled_dual_residual": lmda * dual_residual,
         }
     
     # --- Training Methods ---
@@ -960,11 +992,10 @@ class ADMMTrainer(Trainer):
                 self.state.save_steps = math.ceil(max_steps * args.save_steps)
             else:
                 self.state.save_steps = args.save_steps
-
         # Activate gradient checkpointing if needed
         if args.gradient_checkpointing:
             self.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs=args.gradient_checkpointing_kwargs)
-
+        
         model = self._wrap_model(self.model_wrapped)
 
         # as the model is wrapped, don't use `accelerator.prepare`
@@ -1090,8 +1121,8 @@ class ADMMTrainer(Trainer):
         self.state.is_world_process_zero = self.is_world_process_zero()
 
         # tr_loss is a tensor to avoid synchronization of TPUs through .item()
-        tr_loss = torch.tensor(0.0).to(args.device)
         # _total_loss_scalar is updated everytime .item() has to be called on tr_loss and stores the sum of all losses
+        tr_loss = torch.tensor(0.0).to(args.device)
         self._total_loss_scalar = 0.0
         self._globalstep_last_logged = self.state.global_step
         model.zero_grad()

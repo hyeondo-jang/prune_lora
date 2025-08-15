@@ -11,7 +11,7 @@ import os # os 모듈 import
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.checkpoint.state_dict import StateDictOptions,get_model_state_dict
 import torch.distributed as dist
-#logging
+import logging as stdlogging
 import wandb
 
 logging.info(f"{version('torch')=}")
@@ -155,7 +155,6 @@ if __name__ == '__main__':
     flags.DEFINE_enum('prune_method', "global_admm", ["magnitude", "wanda", "sparsegpt", "safe", "alps","global_admm", 'dense'], 'Pruning method.')
     flags.DEFINE_enum('dataset', 'c4', ["c4", "wikitext2"], 'Calibration dataset.')
     flags.DEFINE_string('data_path', '/home/kwanheelee/.cache/huggingface/hub/datasets--allenai--c4/snapshots/1588ec454efa1a09f29cd18ddd04fe05fc8653a2', 'Path to local raw dataset directory (e.g., ~/.cache/huggingface/hub/dataset). Overrides online download.')
-    flags.DEFINE_string('log_level','info','Logging level. By default, use info for wandb, warning for debugging.')
     # SAFE hyperparams
     flags.DEFINE_float('lmda', 1e-3, 'Penalty parameter for SAFE dual update.')
     flags.DEFINE_integer('batch_size', 4, 'Batch size for SAFE.')
