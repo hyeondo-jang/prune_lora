@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union, Callable
 from absl import logging
 import wandb
 import contextlib
+import inspect
+import functools
 
 import torch
 import torch.nn as nn
@@ -37,7 +39,7 @@ from transformers.integrations.deepspeed import deepspeed_init, deepspeed_load_c
 from transformers.training_args import OptimizerNames, ParallelMode
 from transformers.debug_utils import DebugOption, DebugUnderflowOverflow
 
-from transformers.trainer_pt_utils import find_batch_size, nested_detach, nested_numpify, distributed_concat
+from transformers.trainer_pt_utils import find_batch_size, nested_detach, nested_numpify, distributed_concat, EvalLoopContainer, IterableDatasetShard
 from transformers.trainer_utils import EvalLoopOutput, EvalPrediction, TrainOutput, denumpify_detensorize, has_length, speed_metrics
 from transformers.utils import (
     is_apex_available, 
@@ -46,6 +48,8 @@ from transformers.utils import (
     is_torch_xla_available,
     is_accelerate_available
 )
+from accelerate import Accelerator
+from accelerate.utils import InitProcessGroupKwargs
 
 from .optimizers import ADMM,SAFE
 from .scheduler import PenaltyScheduler, SparsityScheduler
@@ -189,7 +193,7 @@ class ADMMTrainer(Trainer):
         self.penalty_scheduler = None
         self.sparsity_scheduler = None
 
-    def allocate_nonuniform_sparsity(self):
+    def allocate_nonuniform_sparsity(self): ## TODO: FIX this
         """
         Calculates and allocates non-uniform sparsity directly to the optimizer state.
         This version relies solely on parameter names for identification, ensuring
@@ -287,18 +291,124 @@ class ADMMTrainer(Trainer):
                 logger.info(f"  - Block {layer_idx:02d} allocated sparsity: {sparsity:.4f}, score: {score:.4e}")
                 sparsity_table.add_data(f"Block {layer_idx:02d}", sparsity, score)
             
-            if self.args.wandb:
+            if self.args.wandb and self.is_world_process_zero():
                 wandb.log({
                     "adaptive_sparsity_chart": wandb.plot.bar(sparsity_table, "Block Index", "Allocated Sparsity", title="Allocated Sparsity per Block"),
                     "adaptive_score_chart": wandb.plot.bar(sparsity_table, "Block Index", "Average Score", title="Average Sensitivity Score per Block")
                 }, step=self.state.global_step)
 
             wandb_metrics = {f"adaptive_sparsity/block_{idx:02d}": sparsity for idx, sparsity in final_block_sparsity.items()}
-            self.log(wandb_metrics)
+            if self.is_world_process_zero():
+                self.log(wandb_metrics)
         
         # Clean up gradients and memory
         self.model.zero_grad(set_to_none=True)
         torch.cuda.empty_cache()
+
+    def create_accelerator_and_postprocess(self):
+        grad_acc_kwargs = {}
+        if is_accelerate_available("0.28.0") and self.args.accelerator_config.gradient_accumulation_kwargs is not None:
+            grad_acc_kwargs = self.args.accelerator_config.gradient_accumulation_kwargs
+
+        # check if num_steps is attempted to be passed in gradient_accumulation_kwargs
+        if "num_steps" in grad_acc_kwargs and self.args.gradient_accumulation_steps > 1:
+            # raise because we do not know which setting is intended.
+            raise ValueError(
+                "The `AcceleratorConfig`'s `num_steps` is set but `gradient_accumulation_steps` is greater than 1 in the passed `TrainingArguments`"
+                "If using the passed `AcceleratorConfig` is desired, do not set the `TrainingArguments` `gradient_accumulation_steps`."
+            )
+        elif "num_steps" not in grad_acc_kwargs:
+            # take the gradient_accumulation_steps setting from TrainingArguments.
+            grad_acc_kwargs["num_steps"] = self.args.gradient_accumulation_steps
+
+        grad_acc_kwargs["sync_with_dataloader"] = False
+
+        gradient_accumulation_plugin = GradientAccumulationPlugin(**grad_acc_kwargs)
+
+        accelerator_config = self.args.accelerator_config.to_dict()
+
+        if is_accelerate_available("0.28.0"):
+            dataloader_config = DataLoaderConfiguration(
+                split_batches=accelerator_config.pop("split_batches"),
+                dispatch_batches=accelerator_config.pop("dispatch_batches"),
+                even_batches=accelerator_config.pop("even_batches"),
+                use_seedable_sampler=accelerator_config.pop("use_seedable_sampler"),
+            )
+        non_blocking = accelerator_config.pop("non_blocking")
+        if not is_accelerate_available("0.30.0"):
+            if non_blocking:
+                raise ImportError(
+                    "`non_blocking` is only supported in accelerate v0.30.0 and above. Please upgrade accelerate to use this feature."
+                )
+        else:
+            if non_blocking and not self.args.dataloader_pin_memory:
+                logger.warning(
+                    "`non_blocking` is enabled but `dataloader_pin_memory` is not. For the best performance, it's recommended to enable both."
+                )
+            dataloader_config.non_blocking = non_blocking
+        # this would have been updated above, no need for it anymore
+        accelerator_config.pop("gradient_accumulation_kwargs")
+
+        args = {
+            "deepspeed_plugin": self.args.deepspeed_plugin,
+            "gradient_accumulation_plugin": gradient_accumulation_plugin,
+        }
+        if is_accelerate_available("0.28.0"):
+            args["dataloader_config"] = dataloader_config
+        else:
+            args.update(accelerator_config)
+
+        # create accelerator object
+        self.accelerator = Accelerator(**args)
+        # some Trainer classes need to use `gather` instead of `gather_for_metrics`, thus we store a flag
+        self.gather_function = self.accelerator.gather_for_metrics
+
+        if "use_gather_object" in inspect.signature(self.gather_function).parameters.keys():
+            self.gather_function = functools.partial(
+                self.gather_function, use_gather_object=self.args.eval_use_gather_object
+            )
+
+        # deepspeed and accelerate flags covering both trainer args and accelerate launcher
+        self.is_deepspeed_enabled = getattr(self.accelerator.state, "deepspeed_plugin", None) is not None
+        self.is_fsdp_enabled = getattr(self.accelerator.state, "fsdp_plugin", None) is not None
+
+        # post accelerator creation setup
+        if self.is_fsdp_enabled:
+            fsdp_plugin = self.accelerator.state.fsdp_plugin
+            fsdp_plugin.limit_all_gathers = self.args.fsdp_config.get(
+                "limit_all_gathers", fsdp_plugin.limit_all_gathers
+            )
+            fsdp_plugin.activation_checkpointing = self.args.fsdp_config.get(
+                "activation_checkpointing", fsdp_plugin.activation_checkpointing
+            )
+            if fsdp_plugin.activation_checkpointing and self.args.gradient_checkpointing:
+                raise ValueError(
+                    "The activation_checkpointing in FSDP config and the gradient_checkpointing in training arg "
+                    "can't be set to True simultaneously. Please use FSDP's activation_checkpointing logic "
+                    "when using FSDP."
+                )
+
+        if self.is_deepspeed_enabled and getattr(self.args, "hf_deepspeed_config", None) is None:
+            self.propagate_args_to_deepspeed()
+
+        # `save_only_model` can't be used with DeepSpeed/FSDP along with `load_best_model_at_end`
+        if (
+            self.args.save_only_model
+            and (self.is_deepspeed_enabled or self.is_fsdp_enabled)
+            and self.args.load_best_model_at_end
+        ):
+            wrapper = "DeepSpeed" if self.is_deepspeed_enabled else "FSDP"
+            raise ValueError(f"{wrapper} can't be used with `save_only_model` along with `load_best_model_at_end`.")
+
+        # `auto_find_batch_size` isn't supported yet with DeepSpeed Zero-3
+        if (
+            self.is_deepspeed_enabled
+            and self.accelerator.state.deepspeed_plugin.zero_stage == 3
+            and self.args.auto_find_batch_size
+        ):
+            raise ValueError(
+                "`auto_find_batch_size` isn't supported yet with DeepSpeed Zero-3. Please consider using Zero-2, Zero-1, or FSDP"
+            )
 
     def create_optimizer(self):
         """
@@ -576,8 +686,8 @@ class ADMMTrainer(Trainer):
                 num_steps=math.ceil(output.num_samples / total_batch_size),
             )
         )
-
-        self.log(output.metrics)
+        if self.is_world_process_zero():
+            self.log(output.metrics)
 
         self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, output.metrics)
 
@@ -1224,7 +1334,7 @@ class ADMMTrainer(Trainer):
                     for module in model.modules():
                         if isinstance(module, nn.Linear) and id(module.weight) in admm_param_ids:
                             hooks.append(module.register_forward_hook(create_hook(id(module.weight), self.importance_accumulator)))
-
+                
                 with self.accelerator.accumulate(model):
                     tr_loss_step = self.training_step(model, inputs)
 
@@ -1422,7 +1532,8 @@ class ADMMTrainer(Trainer):
 
         self.is_in_train = False
         self._memory_tracker.stop_and_update_metrics(metrics)
-        self.log(metrics) # Log final training metrics
+        if self.is_world_process_zero():
+            self.log(metrics) # Log final training metrics
         run_dir = self._get_output_dir(trial)
         checkpoints_sorted = self._sorted_checkpoints(use_mtime=False, output_dir=run_dir)
 
