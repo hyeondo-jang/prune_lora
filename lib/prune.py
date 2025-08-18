@@ -776,7 +776,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         logging.info("Preparing dataset for ADMM training...")
     # Use ADMM specific flags for dataset parameters
     if FLAGS.admm_steps > 0:
-        num_train_samples = FLAGS.admm_steps * FLAGS.admm_batch_size * FLAGS.admm_gradient_accumulation_steps
+        num_train_samples = FLAGS.admm_steps * FLAGS.admm_batch_size * FLAGS.admm_gradient_accumulation_steps * admm_training_args.world_size
     else:
         num_train_samples = FLAGS.admm_num_train_samples
     # Ensure model's seqlen matches the one used for dataset processing

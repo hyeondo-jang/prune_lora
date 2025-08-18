@@ -1491,18 +1491,19 @@ class ADMMTrainer(Trainer):
         if args.past_index and hasattr(self, "_past"):
             # Clean the state at the end of training
             delattr(self, "_past")
-        if self.is_fsdp_enabled:
-            if self.is_world_process_zero():
-                logger.info("Gathering full model parameters for final projection...")
+        unwrapped_optimizer.final_projection()
+        # if self.is_fsdp_enabled:
+        #     if self.is_world_process_zero():
+        #         logger.info("Gathering full model parameters for final projection...")
             
-            # Use summon_full_params to gather the full model weights on all ranks
-            with FSDP.summon_full_params(self.model, writeback=True, rank0_only=False):
-                # Now that we have the full parameters, perform the final projection.
-                # This operation will be identical across all ranks.
-                unwrapped_optimizer.final_projection()
-        else:
-            # For non-FSDP environments, call directly.
-            unwrapped_optimizer.final_projection()
+        #     # Use summon_full_params to gather the full model weights on all ranks
+        #     with FSDP.summon_full_params(self.model, writeback=True, rank0_only=False):
+        #         # Now that we have the full parameters, perform the final projection.
+        #         # This operation will be identical across all ranks.
+        #         unwrapped_optimizer.final_projection()
+        # else:
+        #     # For non-FSDP environments, call directly.
+        #     unwrapped_optimizer.final_projection()
         if self.is_world_process_zero():
             logger.info('final projection finished')
 

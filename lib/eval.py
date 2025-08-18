@@ -12,7 +12,8 @@ def eval_ppl(
     args,
     model: AutoModelForCausalLM,
     tokenizer: AutoTokenizer,
-    device: torch.device = torch.device("cuda:0")
+    device: torch.device = torch.device("cuda:0"),
+    data_path: str = None
 ) -> dict:
     """
     Evaluate the model on the wikitext2 and c4 datasets.
@@ -21,6 +22,7 @@ def eval_ppl(
         model (AutoModelForCausalLM): The model to evaluate.
         tokenizer (AutoTokenizer): The tokenizer to use for encoding the data.
         device (torch.device): The device to use for evaluation.
+        data_path: The path to the dataset.
     Returns:
         dict: A dictionary containing the perplexity (ppl) for each dataset.
     """
@@ -32,7 +34,7 @@ def eval_ppl(
 
         # Get the test loader
         _, testloader = get_loaders(
-            d, seed=args.seed, seqlen=model.seqlen, tokenizer=tokenizer 
+            d, seed=args.seed, seqlen=model.seqlen, tokenizer=tokenizer, data_path=data_path 
         )
         # Evaluate ppl in no grad context to avoid updating the model
         with torch.no_grad():

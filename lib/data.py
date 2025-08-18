@@ -171,7 +171,8 @@ def get_loaders(
     nsamples: int = 128,
     seed: int = 0,
     seqlen: int = 2048,
-    tokenizer: AutoTokenizer = None
+    tokenizer: AutoTokenizer = None,
+    data_path: str = None
 ) -> tuple[list, TokenizerWrapper]:
     """
     Provides data in the legacy format for local pruning solvers.
@@ -193,7 +194,8 @@ def get_loaders(
         nsamples=nsamples,
         seed=seed,
         seqlen=seqlen,
-        data_type="train"
+        data_type="train",
+        data_path=data_path
     )
 
     # 2. Convert the `datasets.Dataset` object to the old `trainloader` format
@@ -208,12 +210,12 @@ def get_loaders(
 
     # 3. Create the test data object in the old format (using wikitext2 as default)
     if name.lower() == "c4":
-        valdata = _get_raw_dataset("c4", "validation")
+        valdata = _get_raw_dataset("c4", "validation",data_path=data_path)
         valenc = tokenizer(" ".join(valdata[:1100]["text"]), return_tensors='pt')
         valenc = valenc.input_ids[:,:(256*seqlen)]
         valenc = TokenizerWrapper(valenc)
     elif name.lower() == "wikitext2":
-        valdata = _get_raw_dataset("wikitext2", "validation")
+        valdata = _get_raw_dataset("wikitext2", "validation",data_path=data_path)
         valenc = tokenizer("\n\n".join(valdata["text"]), return_tensors='pt')
         valenc = TokenizerWrapper(valenc.input_ids)
 
