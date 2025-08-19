@@ -23,9 +23,11 @@ FLAGS = flags.FLAGS
 
 
 def main(argv):
+    ## for cpu backend
+    dist.init_process_group(backend='cuda:nccl,cpu:gloo')
     global FLAGS
     arguments = FLAGS.flag_values_dict() 
-    
+
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     ## delete afterwards
     if FLAGS.wandb and local_rank == 0:
@@ -117,11 +119,10 @@ def main(argv):
         logging.info("*"*30)
         
         # perplexity evaluation
-        ppl_test = eval_ppl(FLAGS, model, tokenizer, device)
+        ppl_test = eval_ppl(FLAGS, model, tokenizer, device,data_path=FLAGS.data_path)
         logging.info([(key,ppl) for key,ppl in ppl_test.items()])
         if FLAGS.wandb:
             wandb.log({"sparsity_ratio": sparsity_ratio, **{f"ppl_test({key})": value for key, value in ppl_test.items()}})
-
         ## zero-shot evaluation
         if FLAGS.eval_zero_shot:
             logging.info(f"--- Evaluating After Pruning with ({FLAGS.prune_method}, Zero-Shot) ---")
@@ -146,11 +147,11 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    flags.DEFINE_string('model', 'meta-llama/Llama-2-7b-hf', 'model to prune.')
+    flags.DEFINE_string('model', 'facebook/opt-125m', 'model to prune.')
     flags.DEFINE_integer('seqlen', 2048, 'Sequence length for the model.')
     flags.DEFINE_integer('seed', 0, 'Seed for sampling the calibration data.')
     flags.DEFINE_integer('nsamples', 128, 'Number of calibration samples.')
-    flags.DEFINE_float('sparsity_ratio', 0.8, 'Sparsity level')
+    flags.DEFINE_float('sparsity_ratio', 0.5, 'Sparsity level')
     flags.DEFINE_enum('sparsity_type', "unstructured", ["unstructured", "4:8", "2:4"], 'Type of sparsity.')
     flags.DEFINE_enum('prune_method', "global_admm", ["magnitude", "wanda", "sparsegpt", "safe", "alps","global_admm", 'dense'], 'Pruning method.')
     flags.DEFINE_enum('dataset', 'c4', ["c4", "wikitext2"], 'Calibration dataset.')
