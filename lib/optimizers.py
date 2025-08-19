@@ -3,220 +3,517 @@ from typing import Union, Dict
 import torch.distributed as dist
 from torch.distributed.tensor import DTensor
 ## TODO: ADD support for fsdp2 (projection - full tensor)
-class ADMM(torch.optim.Optimizer):
+
+import torch
+import torch.distributed as dist
+
+def _is_dtensor(x): 
+    return hasattr(x, "to_local")
+
+def _loc(x):
+    # Return local shard if DTensor, otherwise the tensor itself
+    return x.to_local() if _is_dtensor(x) else x
+
+class ADMM(torch.optim.Adam):
+    """
+    ADMM optimizer built by subclassing AdamW (single optimizer object).
+    - Proximal term is added AFTER gradient clipping and BEFORE the actual step.
+    - Compatible with FSDP2/DTensor: all state kept per-shard, reductions in fp32.
+    - Preserves original attributes: alpha, interval, sparsity, mask_diff, projection modes, EMA, etc.
+    """
     def __init__(
-        self, 
+        self,
         param_groups,
         projection_fn,
         sparsity: float,
         interval: int,
-        base_optimizer: torch.optim.Optimizer = torch.optim.SGD,
         alpha: float = 1.0,
         lmda: float = 1e-3,
-        lr: float = 2e-4,
         prune_n: int = 0,
         prune_m: int = 0,
-        # importance_matrix is removed from __init__
-        comparison_group: str = 'layer',
-        projection_mode: str = 'identity',
+        comparison_group: str = "layer",
+        projection_mode: str = "identity",   # 'identity' | 'gradient' | 'activation'
         importance_ema: float = 0.0,
-        **kwargs
+        accelerator=None,                    # optional: to get world_size and device
+        **adamw_kwargs
     ):
-        """
-        ADMM optimizer with both sparsity and importance matrix stored in optimizer state.
-        Args:
-            param_groups (list): List of parameter groups.
-                Each group is a dict, e.g., {'params': [...], 'admm': True}
-                'admm': True indicates this group's params are subject to ADMM.
-            projection_fn (callable): Projection function to use.
-            sparsity (float): Sparsity target.
-            interval (int): Interval for dual update.
-            base_optimizer (torch.optim.Optimizer): Base optimizer to use.
-            alpha (float): Over-relaxation parameter for ADMM.
-            lmda (float): Penalty parameter.
-            lr (float): Learning rate for the base optimizer.
-            prune_n (int): n for n:m structured sparsity.
-            prune_m (int): m for n:m structured sparsity.
-            importance_matrix (list[torch.Tensor], optional): Importance matrix for projection.
-            comparison_group (str): Comparison group for projection ('layer', 'column', 'row').
-            projection_mode (str): Mode for the projection function ('identity', 'gradient', 'activation').
-            importance_ema (float): EMA coefficient for importance matrix.
-            **kwargs: Additional arguments for the base optimizer.
-        """
-        if not callable(projection_fn):
-            raise TypeError("projection_fn must be a callable function.")
-        
-        defaults = dict(lr=lr, **kwargs)
-        super(ADMM, self).__init__(param_groups, defaults)
+        super().__init__(param_groups, **adamw_kwargs)
 
-        self.projection = projection_fn
+        # --- ADMM config (mirrors your original) ---
+        self.projection      = projection_fn
+        self.sparsity        = float(sparsity)
+        self.interval        = int(interval)
+        self.alpha           = float(alpha)
+        self.lmda_default    = float(lmda)
+        self.prune_n         = int(prune_n)
+        self.prune_m         = int(prune_m)
         self.comparison_group = comparison_group.lower()
-        if self.comparison_group not in ['layer', 'column', 'row']:
-            raise ValueError(f"comparison_group must be one of 'layer', 'column', 'row'. Got {self.comparison_group}.")
-        
-        self.alpha = alpha
-        if not (0 <= self.alpha <= 2):
-            raise ValueError(f"alpha must be in the range [0, 2]. Got {self.alpha}.")
-        
-        self.projection_mode = projection_mode.lower()
-        if self.projection_mode not in ['identity', 'gradient', 'activation']:
-            raise ValueError(f"projection_mode must be one of 'identity', 'gradient', 'activation'. Got {self.projection_mode}.")
-        
-        self.importance_ema = importance_ema
-        self.sparsity = sparsity # Global default sparsity
-        self.interval = interval
+        self.projection_mode  = projection_mode.lower()
+        self.importance_ema   = float(importance_ema)
+
+        if self.comparison_group not in ("layer", "column", "row"):
+            raise ValueError(f"comparison_group must be 'layer'|'column'|'row', got {self.comparison_group}")
+        if self.projection_mode not in ("identity", "gradient", "activation"):
+            raise ValueError(f"projection_mode must be 'identity'|'gradient'|'activation', got {self.projection_mode}")
+
+        # Runtime helpers
+        self.accelerator = accelerator
         self.current_step = 0
-        self.prune_n = prune_n
-        self.prune_m = prune_m
-        self.mask_diff = 0.0
+        self.mask_diff = 0.0  # average flip ratio across ADMM groups at last interval update
 
-        for group in self.param_groups:
-            if group.get('admm', False):
-                group['lmda'] = lmda
-        
-        base_param_groups = []
-        for pg in self.param_groups:
-            base_pg = {k: v for k, v in pg.items() if k not in ['lmda', 'admm']}
-            base_param_groups.append(base_pg)
-        self.base_optimizer = base_optimizer(base_param_groups, **kwargs)
+        # Per-group λ setup (preserve your per-group lmda semantics)
+        for g in self.param_groups:
+            if g.get("admm", False) and "lmda" not in g:
+                g["lmda"] = self.lmda_default
 
-    def _lazy_init_admm_state(self, p: torch.nn.Parameter):
+        # Lazy-initialized per-parameter ADMM state: 'dual', 'split', 'sparsity', 'importance', 'last_grad_for_importance'
+
+    def _lazy_init_admm_state(self, p: torch.nn.Parameter, group: Dict):
         """
-        Lazily initialize the 'dual', 'split', 'sparsity', and 'importance' states for a parameter.
+        Lazily initialize all required states for a parameter for both ADMM and the base Adam optimizer.
+        If any state already exists for the parameter, this function does nothing.
+        This ensures that when super().step() is called, the state is correctly populated,
+        avoiding conflicts with Adam's internal state initialization logic.
         """
-        if 'dual' in self.state[p]:
+        st = self.state[p]
+        if len(st) > 0:
             return
 
-        st = self.state[p]
-        st['dual'] = torch.zeros_like(p, memory_format=torch.preserve_format)
-        st['sparsity'] = self.sparsity
+        # === Initialize all states at once if state dict is empty ===
+
+        # 1. Initialize Adam's state
+        # This part mimics the state initialization inside torch.optim.Adam._init_group
+        st["step"] = torch.tensor(0.0) # Or appropriate initialization based on capturable/fused flags
+        st["exp_avg"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+        st["exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+        if group.get("amsgrad", False):
+            st["max_exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+
+        # 2. Initialize ADMM's state
+        # Dual variable u (same shape as p)
+        st["dual"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+        # Per-parameter sparsity (allow future customization)
+        st["sparsity"] = self.sparsity
+
+        # Optional importance buffer (shape strategy depends on projection mode)
         init_importance = None
-        if self.projection_mode != 'identity': 
-            #TODO: implement here
-            # Store only the diagonal of the importance matrix as a vector.
-            # For a Linear layer weight of shape (out, in), the diagonal has 'in' elements.
-            st['importance'] = torch.zeros(p.shape[-1], device=p.device)
-            init_importance = st['importance']
+        if self.projection_mode != "identity":
+            # For a Linear layer weight of shape (out, in), the importance is often
+            # calculated per-column, resulting in a vector of 'in' elements.
+            # We initialize it as a 1-D tensor based on the last dimension of the weight.
+            st["importance"] = torch.zeros(_loc(p).shape[-1], device=p.device)
+            init_importance = st["importance"]
 
-        # Initial projection for 'split' uses the initial importance (zeros)
-        z0 = self.projection(
-            [p.detach()], st['sparsity'], self.prune_n, self.prune_m, [init_importance], comparison_group=self.comparison_group
-        )[0]
-        st['split'] = z0.to(device=p.device)
+        # Initial split z := Proj(p) (must clone to avoid aliasing)
+        z0 = self.projection([p.detach()], st["sparsity"], self.prune_n, self.prune_m,
+                             [init_importance], comparison_group=self.comparison_group)[0]
+        st["split"] = z0.detach().clone().to(device=p.device)
 
-    def final_projection(self):
-        """Applies the final projection to the ADMM parameters."""
-        with torch.no_grad():
-            for group in self.param_groups:
-                if group.get('admm', False):
-                    for w in group['params']:
-                        self._lazy_init_admm_state(w)
-                        
-                        p_sparsity = self.state[w]['sparsity']
-                        p_importance = None
-                        if self.projection_mode != 'identity':
-                            p_importance = self.state[w]['importance']
-                        
-                        final_weight = self.projection(
-                            [w.detach()], p_sparsity, self.prune_n, self.prune_m, [p_importance], self.comparison_group
-                        )[0]
-                        w.data.copy_(final_weight)
+        # Gradient snapshot used when projection_mode == 'gradient'
+        st["last_grad_for_importance"] = None
 
     @torch.no_grad()
-    def step(self, zero_grad=False):
-        for group in self.param_groups:
-            if group.get('admm', False):
-                weights = group['params']
-                lmda = group['lmda']
-                for w in weights:
-                    if w.grad is None: continue
-                    self._lazy_init_admm_state(w)
-                    dual = self.state[w]['dual']
-                    split = self.state[w]['split']
-                    proximal = lmda * (w.detach() - split.detach() + dual.detach())
-                    w.grad.add_(proximal)
+    def _add_proximal(self):
+        """
+        Add proximal term to gradients AFTER global gradient clipping and
+        BEFORE the actual optimizer step. This ensures proximal is not clipped.
+        We also scale proximal to match distributed gradient averaging.
+        """
+        # Determine world size for average scaling (DDP/FSDP usually average grads across ranks)
+        if self.accelerator is not None and getattr(self.accelerator, "num_processes", None):
+            world = int(self.accelerator.num_processes)
+        elif dist.is_initialized():
+            world = dist.get_world_size()
+        else:
+            world = 1
+        avg_div = world if world > 0 else 1
 
-        self.base_optimizer.step()
-        
-        if (self.current_step + 1) % self.interval == 0:
-            self.mask_diff = 0.0
-            with torch.no_grad():
-                for group in self.param_groups:
-                    if group.get('admm', False):
-                        weights = group['params']
-                        lmda = group['lmda']
-                        for w in weights:
-                            self._lazy_init_admm_state(w)
-                            st = self.state[w]
-                            dual = st['dual']
-                            split = st['split']
-                            p_sparsity = st['sparsity']
+        for g in self.param_groups:
+            if not g.get("admm", False):
+                continue
+            lmda = float(g.get("lmda", self.lmda_default))
+            for w in g["params"]:
+                if w.grad is None:
+                    continue
+                self._lazy_init_admm_state(w, g)
+                st = self.state[w]
+                dual, split = st["dual"], st["split"]
 
-                            z_input_i = w.detach() + dual.detach()
-                            importance_matrix_i = None
-                            
-                            if self.projection_mode == 'gradient':
-                                proximal = lmda * (w.detach() - split.detach() + dual.detach())
-                                grad_input_i = w.grad.detach() - proximal
-                                current_importance = torch.pow(grad_input_i, 2)
-                                
-                                # Update importance matrix in the state using EMA
-                                if self.importance_ema > 0:
-                                    st['importance'].mul_(self.importance_ema).add_(current_importance, alpha=1 - self.importance_ema)
-                                else:
-                                    st['importance'].copy4_(current_importance)
-                                importance_matrix_i = st['importance']
-                            
-                            elif self.projection_mode == 'activation':
-                                # For activation mode, the trainer should have updated the state beforehand.
-                                # We just use the value from the state.
-                                importance_matrix_i = st['importance']
+                # Work on local shard if DTensor
+                w_l = _loc(w)
+                s_l = _loc(split)
+                d_l = _loc(dual)
 
-                            z_new_i = self.projection(
-                                [z_input_i], p_sparsity, self.prune_n, self.prune_m,
-                                [importance_matrix_i], comparison_group=self.comparison_group
-                            )[0]
-                            
-                            u_new_i = dual.detach() + self.alpha * (w.detach() - z_new_i)
-                            
-                            ## if Distributed
-                            if isinstance(split,DTensor):
-                                old_mask_local = split.to_local()
-                                new_mask_local = z_new_i.to_local()
+                # Proximal term: λ (w - z + u)
+                prox = lmda * (w_l.detach() - s_l.detach() + d_l.detach())
 
-                                old_zero = (old_mask_local == 0)
-                                new_zero = (new_mask_local == 0)
-                                
-                                flip_local = (old_zero ^ new_zero).sum()
-                                numel_local = torch.tensor(old_mask_local.numel(),device = old_mask_local.device)
+                # Match AMP grad dtype and distributed averaging scale
+                prox = prox.to(w.grad.dtype)
+                if avg_div > 1:
+                    prox = prox / avg_div
 
-                                dist.all_reduce(flip_local, op=dist.ReduceOp.SUM)
-                                dist.all_reduce(numel_local, op=dist.ReduceOp.SUM)
+                # Add to gradient (handle grad DTensor if any)
+                if hasattr(w.grad, "to_local"):
+                    gl = w.grad.to_local()
+                    gl.add_(prox)
+                else:
+                    w.grad.add_(prox)
 
-                            else:
-                                old_mask = (split == 0).detach().cpu()
-                                new_mask = (z_new_i == 0).detach().cpu()
+                # Stash grad for gradient-importance if needed (pre-step, post-clip)
+                if self.projection_mode == "gradient":
+                    st["last_grad_for_importance"] = (_loc(w.grad).detach().clone()
+                                                      if hasattr(w.grad, "to_local")
+                                                      else w.grad.detach().clone())
 
-                                flip_local = (old_mask ^ new_mask).sum()
-                                numel_local = torch.tensor(old_mask.numel(), device=old_mask.device)
+    @torch.no_grad()
+    def _dual_update(self):
+        """
+        Every 'interval' steps, update split (z) and dual (u), and compute mask_diff.
+        - z^{k+1} = Proj(w + u)
+        - u^{k+1} = u + α (w - z^{k+1})
+        Also compute global mask flip ratio between old z and new z.
+        """
+        if (self.current_step % self.interval) != 0:
+            return
 
-                            mask_diff = (flip_local.float() / numel_local.float()).item()
-                            self.mask_diff += mask_diff
+        self.mask_diff = 0.0
+        admm_groups = 0
 
-                            dual.copy_(u_new_i)
-                            split.copy_(z_new_i)
-                        
-                        if len(weights) > 0:
-                            self.mask_diff /= len(weights)
-                            
+        for g in self.param_groups:
+            if not g.get("admm", False):
+                continue
+            admm_groups += 1
+            lmda = float(g.get("lmda", self.lmda_default))
+            weights = list(g["params"])
+            if not weights:
+                continue
+
+            # Accumulate flips/numel across params; reduce later
+            device = weights[0].device
+            flip_sum = torch.tensor(0.0, device=device, dtype=torch.float32)
+            numel_sum = torch.tensor(0.0, device=device, dtype=torch.float32)
+
+            for w in weights:
+                self._lazy_init_admm_state(w, g)
+                st = self.state[w]
+
+                dual  = st["dual"]
+                split = st["split"]
+                spars = st["sparsity"]
+
+                # Optional importance update for 'gradient' mode (EMA on reduced axis)
+                importance_i = None
+                if self.projection_mode == "gradient":
+                    gsnap = st.get("last_grad_for_importance", None)
+                    if gsnap is not None:
+                        gi = _loc(gsnap).float()
+                        if gi.ndim >= 2:
+                            # Example strategy: column-wise importance
+                            imp_now = (gi * gi).sum(dim=0)
+                        else:
+                            imp_now = gi.abs()
+                        if self.importance_ema > 0.0:
+                            st["importance"].mul_(self.importance_ema).add_(imp_now, alpha=1 - self.importance_ema)
+                        else:
+                            st["importance"].copy_(imp_now)
+                        importance_i = st["importance"]
+                        st["last_grad_for_importance"] = None
+                elif self.projection_mode == "activation":
+                    importance_i = st.get("importance", None)
+
+                # z update on local shard input (w + u)
+                z_in  = (w.detach() + dual.detach())
+                z_new = self.projection([z_in], spars, self.prune_n, self.prune_m,
+                                        [importance_i], comparison_group=self.comparison_group)[0]
+                z_new = z_new.detach().clone().to(w.device)  # clone to avoid aliasing
+
+                # u update: u <- u + α (w - z_new)
+                u_new = dual.detach() + self.alpha * (w.detach() - z_new)
+
+                # Mask flip ratio between old z and new z (local shard)
+                old_local = _loc(split)
+                new_local = _loc(z_new)
+                old_zero = (old_local == 0)
+                new_zero = (new_local == 0)
+                flip_local = (old_zero ^ new_zero).sum().to(device=device, dtype=torch.float32)
+                numel_local = torch.tensor(old_local.numel(), device=device, dtype=torch.float32)
+
+                flip_sum  += flip_local
+                numel_sum += numel_local
+
+                # In-place state updates (keep tensors allocated on the correct device)
+                dual.copy_(u_new)
+                split.copy_(z_new)
+
+            # Global reduce of flip/numel (NCCL expects CUDA tensors)
+            if dist.is_initialized():
+                dist.all_reduce(flip_sum,  op=dist.ReduceOp.SUM)
+                dist.all_reduce(numel_sum, op=dist.ReduceOp.SUM)
+
+            # Accumulate average flip ratio across ADMM groups
+            denom = (numel_sum + 1e-12)
+            self.mask_diff += float(flip_sum / denom)
+
+        if admm_groups > 0:
+            self.mask_diff /= admm_groups
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        """
+        Order:
+        1) (Trainer already did backward and global clipping)
+        2) Add proximal (excluded from clipping)
+        3) super().step()   (keeps Accelerate/GradScaler/distributed hooks)
+        4) ADMM z/u updates every 'interval' steps
+        """
+        self._add_proximal()
+        out = super().step(closure)
+        self._dual_update()
         self.current_step += 1
+        return out
 
-    def get_mask_diff(self):
+    @torch.no_grad()
+    def final_projection(self):
         """
-        Returns the mask difference since the last step.
-        This is useful for logging or monitoring changes in sparsity.
+        Apply the final projection to ADMM-tagged parameter groups (in-place).
+        This should be called after training is complete to ensure weights have the desired sparsity structure.
         """
-        return self.mask_diff
+        for g in self.param_groups:
+            if not g.get("admm", False):
+                continue
+            for w in g["params"]:
+                # Ensure state is initialized, although it should be by this point.
+                if w not in self.state or len(self.state[w]) == 0:
+                    # This case is unlikely if the param was ever updated, but as a safeguard:
+                    self._lazy_init_admm_state(w, g)
+
+                st = self.state[w]
+                importance = st.get("importance", None) if self.projection_mode != "identity" else None
+                wnew = self.projection([w.detach()], st["sparsity"], self.prune_n, self.prune_m,
+                                       [importance], comparison_group=self.comparison_group)[0]
+                w.data.copy_(wnew)
+
+    def get_mask_diff(self) -> float:
+        """
+        Return the averaged mask flip ratio computed at the last interval update.
+        """
+        return float(self.mask_diff)
+
+
+## LEGACY ADMM
+# class ADMM(torch.optim.Optimizer):
+#     def __init__(
+#         self, 
+#         param_groups,
+#         projection_fn,
+#         sparsity: float,
+#         interval: int,
+#         base_optimizer: torch.optim.Optimizer = torch.optim.SGD,
+#         alpha: float = 1.0,
+#         lmda: float = 1e-3,
+#         lr: float = 2e-4,
+#         prune_n: int = 0,
+#         prune_m: int = 0,
+#         # importance_matrix is removed from __init__
+#         comparison_group: str = 'layer',
+#         projection_mode: str = 'identity',
+#         importance_ema: float = 0.0,
+#         **kwargs
+#     ):
+#         """
+#         ADMM optimizer with both sparsity and importance matrix stored in optimizer state.
+#         Args:
+#             param_groups (list): List of parameter groups.
+#                 Each group is a dict, e.g., {'params': [...], 'admm': True}
+#                 'admm': True indicates this group's params are subject to ADMM.
+#             projection_fn (callable): Projection function to use.
+#             sparsity (float): Sparsity target.
+#             interval (int): Interval for dual update.
+#             base_optimizer (torch.optim.Optimizer): Base optimizer to use.
+#             alpha (float): Over-relaxation parameter for ADMM.
+#             lmda (float): Penalty parameter.
+#             lr (float): Learning rate for the base optimizer.
+#             prune_n (int): n for n:m structured sparsity.
+#             prune_m (int): m for n:m structured sparsity.
+#             importance_matrix (list[torch.Tensor], optional): Importance matrix for projection.
+#             comparison_group (str): Comparison group for projection ('layer', 'column', 'row').
+#             projection_mode (str): Mode for the projection function ('identity', 'gradient', 'activation').
+#             importance_ema (float): EMA coefficient for importance matrix.
+#             **kwargs: Additional arguments for the base optimizer.
+#         """
+#         if not callable(projection_fn):
+#             raise TypeError("projection_fn must be a callable function.")
+        
+#         defaults = dict(lr=lr, **kwargs)
+#         super(ADMM, self).__init__(param_groups, defaults)
+
+#         self.projection = projection_fn
+#         self.comparison_group = comparison_group.lower()
+#         if self.comparison_group not in ['layer', 'column', 'row']:
+#             raise ValueError(f"comparison_group must be one of 'layer', 'column', 'row'. Got {self.comparison_group}.")
+        
+#         self.alpha = alpha
+#         if not (0 <= self.alpha <= 2):
+#             raise ValueError(f"alpha must be in the range [0, 2]. Got {self.alpha}.")
+        
+#         self.projection_mode = projection_mode.lower()
+#         if self.projection_mode not in ['identity', 'gradient', 'activation']:
+#             raise ValueError(f"projection_mode must be one of 'identity', 'gradient', 'activation'. Got {self.projection_mode}.")
+        
+#         self.importance_ema = importance_ema
+#         self.sparsity = sparsity # Global default sparsity
+#         self.interval = interval
+#         self.current_step = 0
+#         self.prune_n = prune_n
+#         self.prune_m = prune_m
+#         self.mask_diff = 0.0
+
+#         for group in self.param_groups:
+#             if group.get('admm', False):
+#                 group['lmda'] = lmda
+        
+#         base_param_groups = []
+#         for pg in self.param_groups:
+#             base_pg = {k: v for k, v in pg.items() if k not in ['lmda', 'admm']}
+#             base_param_groups.append(base_pg)
+#         self.base_optimizer = base_optimizer(base_param_groups, **kwargs)
+
+#     def _lazy_init_admm_state(self, p: torch.nn.Parameter):
+#         """
+#         Lazily initialize the 'dual', 'split', 'sparsity', and 'importance' states for a parameter.
+#         """
+#         if 'dual' in self.state[p]:
+#             return
+
+#         st = self.state[p]
+#         st['dual'] = torch.zeros_like(p, memory_format=torch.preserve_format)
+#         st['sparsity'] = self.sparsity
+#         init_importance = None
+#         if self.projection_mode != 'identity': 
+#             #TODO: implement here
+#             # Store only the diagonal of the importance matrix as a vector.
+#             # For a Linear layer weight of shape (out, in), the diagonal has 'in' elements.
+#             st['importance'] = torch.zeros(p.shape[-1], device=p.device)
+#             init_importance = st['importance']
+
+#         # Initial projection for 'split' uses the initial importance (zeros)
+#         z0 = self.projection(
+#             [p.detach()], st['sparsity'], self.prune_n, self.prune_m, [init_importance], comparison_group=self.comparison_group
+#         )[0]
+#         st['split'] = z0.detach().clone().to(device=p.device)  
+    
+#     def final_projection(self):
+#         """Applies the final projection to the ADMM parameters."""
+#         with torch.no_grad():
+#             for group in self.param_groups:
+#                 if group.get('admm', False):
+#                     for w in group['params']:
+#                         self._lazy_init_admm_state(w)
+                        
+#                         p_sparsity = self.state[w]['sparsity']
+#                         p_importance = None
+#                         if self.projection_mode != 'identity':
+#                             p_importance = self.state[w]['importance']
+                        
+#                         final_weight = self.projection(
+#                             [w.detach()], p_sparsity, self.prune_n, self.prune_m, [p_importance], self.comparison_group
+#                         )[0]
+#                         w.data.copy_(final_weight)
+
+#     @torch.no_grad()
+#     def step(self, zero_grad=False):
+#         for group in self.param_groups:
+#             if group.get('admm', False):
+#                 weights = group['params']
+#                 lmda = group['lmda']
+#                 for w in weights:
+#                     if w.grad is None: continue
+#                     self._lazy_init_admm_state(w)
+#                     dual = self.state[w]['dual']
+#                     split = self.state[w]['split']
+#                     proximal = lmda * (w.detach() - split.detach() + dual.detach())
+#                     w.grad.add_(proximal)
+
+#         self.base_optimizer.step()
+  
+#         if (self.current_step + 1) % self.interval == 0:
+#             self.mask_diff = 0.0
+#             with torch.no_grad():
+#                 for group in self.param_groups:
+#                     if group.get('admm', False):
+#                         weights = group['params']
+#                         lmda = group['lmda']
+#                         for w in weights:
+#                             st = self.state[w]
+#                             dual = st['dual']
+#                             split = st['split']
+#                             p_sparsity = st['sparsity']
+
+#                             z_input_i = w.detach() + dual.detach()
+#                             importance_matrix_i = None
+                            
+#                             if self.projection_mode == 'gradient':
+#                                 proximal = lmda * (w.detach() - split.detach() + dual.detach())
+#                                 grad_input_i = w.grad.detach() - proximal
+#                                 current_importance = torch.pow(grad_input_i, 2)
+                                
+#                                 # Update importance matrix in the state using EMA
+#                                 if self.importance_ema > 0:
+#                                     st['importance'].mul_(self.importance_ema).add_(current_importance, alpha=1 - self.importance_ema)
+#                                 else:
+#                                     st['importance'].copy4_(current_importance)
+#                                 importance_matrix_i = st['importance']
+                            
+#                             elif self.projection_mode == 'activation':
+#                                 # For activation mode, the trainer should have updated the state beforehand.
+#                                 # We just use the value from the state.
+#                                 importance_matrix_i = st['importance']
+
+#                             z_new_i = self.projection(
+#                                 [z_input_i], p_sparsity, self.prune_n, self.prune_m,
+#                                 [importance_matrix_i], comparison_group=self.comparison_group
+#                             )[0]
+                            
+#                             u_new_i = dual.detach() + self.alpha * (w.detach() - z_new_i)
+                            
+#                             ## if Distributed
+#                             if isinstance(split,DTensor):
+#                                 old_mask_local = split.to_local()
+#                                 new_mask_local = z_new_i.to_local()
+
+#                                 old_zero = (old_mask_local == 0)
+#                                 new_zero = (new_mask_local == 0)
+                                
+#                                 flip_local = (old_zero ^ new_zero).sum()
+#                                 numel_local = torch.tensor(old_mask_local.numel(),device = old_mask_local.device)
+
+#                                 dist.all_reduce(flip_local, op=dist.ReduceOp.SUM)
+#                                 dist.all_reduce(numel_local, op=dist.ReduceOp.SUM)
+
+#                             else:
+#                                 old_mask = (split == 0).detach().cpu()
+#                                 new_mask = (z_new_i == 0).detach().cpu()
+
+#                                 flip_local = (old_mask ^ new_mask).sum()
+#                                 numel_local = torch.tensor(old_mask.numel(), device=old_mask.device)
+
+#                             mask_diff = (flip_local.float() / numel_local.float()).item()
+#                             self.mask_diff += mask_diff
+
+#                             dual.copy_(u_new_i)
+#                             split.copy_(z_new_i)
+                        
+#                         if len(weights) > 0:
+#                             self.mask_diff /= len(weights)
+                            
+#         self.current_step += 1
+
+#     def get_mask_diff(self):
+#         """
+#         Returns the mask difference since the last step.
+#         This is useful for logging or monitoring changes in sparsity.
+#         """
+#         return self.mask_diff
 
 ### TODO: UPDATE SAFE
 class SAFE(torch.optim.Optimizer):

@@ -127,49 +127,49 @@ SCALER_NAME = "scaler.pt"
 
 
 
-def compute_metrics(eval_preds: EvalPrediction):
-    """Computes evaluation metrics, including perplexity."""
-    # eval_preds.predictions = logits
-    # eval_preds.label_ids = labels
-    logits, labels = eval_preds.predictions, eval_preds.label_ids
+# def compute_metrics(eval_preds: EvalPrediction):
+#     """Computes evaluation metrics, including perplexity."""
+#     # eval_preds.predictions = logits
+#     # eval_preds.label_ids = labels
+#     logits, labels = eval_preds.predictions, eval_preds.label_ids
 
-    if logits is None or labels is None:
-        logger.warning("compute_metrics: Logits or labels are None, cannot compute perplexity.")
-        return {}
+#     if logits is None or labels is None:
+#         logger.warning("compute_metrics: Logits or labels are None, cannot compute perplexity.")
+#         return {}
 
-    # Shift so that tokens < n predict n
-    # Convert to torch tensors if numpy arrays
-    if isinstance(logits, np.ndarray):
-        logits = torch.tensor(logits)
-    if isinstance(labels, np.ndarray):
-        labels = torch.tensor(labels)
+#     # Shift so that tokens < n predict n
+#     # Convert to torch tensors if numpy arrays
+#     if isinstance(logits, np.ndarray):
+#         logits = torch.tensor(logits)
+#     if isinstance(labels, np.ndarray):
+#         labels = torch.tensor(labels)
     
-    shift_logits = logits[..., :-1, :].contiguous()
-    shift_labels = labels[..., 1:].contiguous()
+#     shift_logits = logits[..., :-1, :].contiguous()
+#     shift_labels = labels[..., 1:].contiguous()
 
-    # Calculate cross-entropy loss
-    loss_fct = torch.nn.CrossEntropyLoss()
-    # Flatten the tokens
-    try:
-        # Ensure logits and labels are float and long respectively, and on CPU for safety if needed
-        shift_logits_float = shift_logits.view(-1, shift_logits.size(-1)).float() # Ensure float
-        shift_labels_long = shift_labels.view(-1).long() # Ensure long
+#     # Calculate cross-entropy loss
+#     loss_fct = torch.nn.CrossEntropyLoss()
+#     # Flatten the tokens
+#     try:
+#         # Ensure logits and labels are float and long respectively, and on CPU for safety if needed
+#         shift_logits_float = shift_logits.view(-1, shift_logits.size(-1)).float() # Ensure float
+#         shift_labels_long = shift_labels.view(-1).long() # Ensure long
 
-        # Move to CPU if tensors are large to avoid potential GPU OOM during calculation
-        shift_logits_float = shift_logits_float.cpu()
-        shift_labels_long = shift_labels_long.cpu()
+#         # Move to CPU if tensors are large to avoid potential GPU OOM during calculation
+#         shift_logits_float = shift_logits_float.cpu()
+#         shift_labels_long = shift_labels_long.cpu()
 
-        loss = loss_fct(shift_logits_float, shift_labels_long)
-        perplexity = math.exp(loss.item())
-    except OverflowError:
-        perplexity = float("inf")
-        loss = torch.tensor(float("inf")) # Assign inf loss as well
-    except Exception as e:
-        logger.error(f"Error calculating perplexity: {e}", exc_info=True)
-        perplexity = float("inf")
-        loss = torch.tensor(float("inf"))
+#         loss = loss_fct(shift_logits_float, shift_labels_long)
+#         perplexity = math.exp(loss.item())
+#     except OverflowError:
+#         perplexity = float("inf")
+#         loss = torch.tensor(float("inf")) # Assign inf loss as well
+#     except Exception as e:
+#         logger.error(f"Error calculating perplexity: {e}", exc_info=True)
+#         perplexity = float("inf")
+#         loss = torch.tensor(float("inf"))
 
-    return {"perplexity": perplexity, "eval_cross_entropy_loss": loss.item()}
+#     return {"perplexity": perplexity, "eval_cross_entropy_loss": loss.item()}
 
 
 class ADMMTrainer(Trainer):
@@ -463,32 +463,22 @@ class ADMMTrainer(Trainer):
                 logger.info(f'Found {len(admm_param_list)} / {len([p for p in opt_model.parameters()])} parameters for ADMM/SAFE.')
             
             # Base optimizer for ADMM (not for SAFE, as SAFE uses SAM which has its own base)
+            ## TODO: this needs to be fixed ()
             base_optimizer_kwargs = {
-                'weight_decay': self.args.weight_decay
+                # 'weight_decay': self.args.weight_decay
             }
-        
-            if self.args.base_optimizer_type == 'adam':
-                base_optimizer = torch.optim.Adam
-            elif self.args.base_optimizer_type == 'sgd':
-                base_optimizer = torch.optim.SGD
-            else:
-                NotImplementedError(f"Base optimizer type '{self.args.base_optimizer_type}' is not implemented. Supported: 'adam'.")
+    
             # Prepare kwargs for ADMM
-            # Add Adam specific args if base is adam
-            if self.args.base_optimizer_type == 'adam':
-                 base_optimizer_kwargs["betas"] = (self.args.adam_beta1, self.args.adam_beta2)
-                 base_optimizer_kwargs["eps"] = self.args.adam_epsilon
-        
-            
-            if self.args.is_safe:
-                
+
+            if self.args.is_safe: ## TODO: fix this
+
                 self.optimizer = SAFE(
                     param_groups,
                     projection_fn=projection,
                     alpha=self.args.admm_alpha,
                     lmda=self.args.admm_lmda, sparsity=self.args.sparsity_ratio, interval=self.args.admm_interval, 
                     lr=self.args.learning_rate, prune_n=self.args.prune_n, prune_m=self.args.prune_m, 
-                    base_optimizer=base_optimizer, rho = self.args.rho, comparison_group=self.args.admm_projection_comparison_group,
+                    rho = self.args.rho, comparison_group=self.args.admm_projection_comparison_group,
                     **base_optimizer_kwargs,
                 )
             else:
@@ -500,12 +490,12 @@ class ADMMTrainer(Trainer):
                 self.optimizer = ADMM(
                     param_groups,
                     projection_fn= projection,
-                    alpha=self.args.admm_alpha,  # Over-relaxation parameter
-                    lmda=self.args.admm_lmda, sparsity=self.args.sparsity_ratio, interval=self.args.admm_interval, 
-                    lr=self.args.learning_rate, prune_n=self.args.prune_n, prune_m=self.args.admm_projection_comparison_group,
-                    projection_mode= self.args.admm_projection_mode,
+                    alpha=self.args.admm_alpha,
+                    lmda=self.args.admm_lmda, sparsity=self.args.sparsity_ratio, interval=self.args.admm_interval,
+                    lr=self.args.learning_rate, prune_n=self.args.prune_n, prune_m=self.args.prune_m, comparison_group=self.args.admm_projection_comparison_group,
+                    projection_mode=self.args.admm_projection_mode,
                     importance_ema=self.args.admm_importance_ema,
-                    base_optimizer = base_optimizer,
+                    accelerator=self.accelerator,
                     **base_optimizer_kwargs,
                 )
             if self.is_world_process_zero():
@@ -520,7 +510,7 @@ class ADMMTrainer(Trainer):
         self.create_optimizer()
         optimizer = self.optimizer
 
-        self.create_scheduler(num_training_steps=num_training_steps, optimizer=optimizer.base_optimizer)
+        self.create_scheduler(num_training_steps=num_training_steps, optimizer=optimizer)
         if self.is_world_process_zero():
             logger.info("ADMM optimizer and scheduler created (scheduler targets base optimizer).")
 
@@ -577,7 +567,15 @@ class ADMMTrainer(Trainer):
         - Removes 'batch_idx' before calling model directly if not needed.
         - Returns generated standard labels when loss_type='rem' for metric computation.
         """
-        has_labels = any(inputs.get(k) is not None for k in self.label_names)
+        has_labels = False if len(self.label_names) == 0 else all(inputs.get(k) is not None for k in self.label_names)
+        # For CLIP-like models capable of returning loss values.
+        # If `return_loss` is not specified or being `None` in `inputs`, we check if the default value of `return_loss`
+        # is `True` in `model.forward`.
+        return_loss = inputs.get("return_loss", None)
+        if return_loss is None:
+            return_loss = self.can_return_loss
+        loss_without_labels = True if len(self.label_names) == 0 and return_loss else False
+
         prepared_inputs = self._prepare_inputs(inputs)
 
         if ignore_keys is None:
@@ -596,57 +594,113 @@ class ADMMTrainer(Trainer):
         logits = None
         labels_for_output = original_labels # Default to original labels
 
-        with torch.inference_mode():
-            with self.compute_loss_context_manager():
-                if self.args.loss_type == "rem":
-                    # --- REM Loss Path ---
-                    # compute_loss returns (rem_loss, outputs) where outputs contains generated_labels_for_metrics
-                    loss, outputs = self.compute_loss(model, prepared_inputs.copy(), return_outputs=True)
-                    logits = outputs.get("logits")
-                    # Use the generated standard labels for metrics when using REM loss
-                    labels_for_output = outputs.get("generated_labels_for_metrics")
-                    if labels_for_output is None:
-                         logger.warning("REM loss used, but generated_labels_for_metrics not found in outputs.")
-                         labels_for_output = original_labels # Fallback, though likely incorrect for PPL
-                    # --- End REM Loss Path ---
+        with torch.no_grad():
+            if is_sagemaker_mp_enabled():
+                raw_outputs = smp_forward_only(model,prepared_inputs)
+                if has_labels or loss_without_labels:
+                    if isinstance(raw_outputs, dict):
+                        loss_mb = raw_outputs["loss"]
+                        logits_mb = tuple(v for k, v in raw_outputs.items() if k not in ignore_keys + ["loss"])
+                    else:
+                        loss_mb = raw_outputs[0]
+                        logits_mb = raw_outputs[1:]
 
-                elif has_labels:
-                    # --- Standard Loss Path (with labels) ---
-                    inputs_for_std_loss = prepared_inputs.copy()
-                    if 'batch_idx' in inputs_for_std_loss: inputs_for_std_loss.pop('batch_idx')
-                    loss, outputs = self.compute_loss(model, inputs_for_std_loss, return_outputs=True)
-                    logits = outputs.get("logits")
-                    # labels_for_output remains original_labels
-                    # --- End Standard Loss Path (with labels) ---
-
+                    loss = loss_mb.reduce_mean().detach().cpu()
+                    logits = smp_nested_concat(logits_mb)
                 else:
-                    # --- No Labels Path ---
                     loss = None
-                    inputs_for_fwd = prepared_inputs.copy()
-                    if 'batch_idx' in inputs_for_fwd: inputs_for_fwd.pop('batch_idx')
-                    outputs = model(**inputs_for_fwd)
-                    logits = outputs.get("logits")
-                    labels_for_output = None
-                    # --- End No Labels Path ---
+                    if isinstance(raw_outputs, dict):
+                        logits_mb = tuple(v for k, v in raw_outputs.items() if k not in ignore_keys)
+                    else:
+                        logits_mb = raw_outputs
+                    logits = smp_nested_concat(logits_mb)
+            else:
+                if self.args.loss_type == "rem":
+                    ##TODO: implement rem loss
+                    pass
+                else:
+                    ## standard ce loss
+                    if has_labels or loss_without_labels:
+                        with self.compute_loss_context_manager():
+                            loss, outputs = self.compute_loss(model, prepared_inputs, return_outputs=True)
+                        loss = loss.mean().detach()
 
-        # Detach outputs
-        if loss is not None: loss = loss.mean().detach()
-        if logits is not None: logits = nested_detach(logits)
-        if labels_for_output is not None: labels_for_output = nested_detach(labels_for_output) # Detach generated labels too
-
+                        if isinstance(outputs, dict):
+                            logits = tuple(v for k, v in outputs.items() if k not in ignore_keys + ["loss"])
+                        else:
+                            logits = outputs[1:]
+                    else:
+                        loss = None
+                        with self.compute_loss_context_manager():
+                            outputs = model(**prepared_inputs)
+                        if isinstance(outputs, dict):
+                            logits = tuple(v for k, v in outputs.items() if k not in ignore_keys)
+                        else:
+                            logits = outputs
+                        # TODO: this needs to be fixed and made cleaner later.
+                        if self.args.past_index >= 0:
+                            self._past = outputs[self.args.past_index - 1]                     
         if prediction_loss_only:
-            logits = None
-            labels_for_output = None
+            return (loss, None, None)
 
-        # Ensure tuple structure (loss, logits, labels)
-        final_output = (loss, logits, labels_for_output)
+        logits = nested_detach(logits)
+        if len(logits) == 1:
+            logits = logits[0]
 
-        # Log loss if computed
-        if loss is not None and self.state.is_world_process_zero:
-             loss_key = "REM loss" if self.args.loss_type == "rem" else "CE loss"
-             logger.debug(f"[prediction_step] Eval {loss_key}: {loss.item():.4f}")
+        return (loss, logits, original_labels)
 
-        return final_output
+        ## LEGACY CODE. 
+        # with torch.inference_mode():
+        #     with self.compute_loss_context_manager():
+        #         if self.args.loss_type == "rem":
+        #             # --- REM Loss Path ---
+        #             # compute_loss returns (rem_loss, outputs) where outputs contains generated_labels_for_metrics
+        #             loss, outputs = self.compute_loss(model, prepared_inputs.copy(), return_outputs=True)
+        #             logits = outputs.get("logits")
+        #             # Use the generated standard labels for metrics when using REM loss
+        #             labels_for_output = outputs.get("generated_labels_for_metrics")
+        #             if labels_for_output is None:
+        #                  logger.warning("REM loss used, but generated_labels_for_metrics not found in outputs.")
+        #                  labels_for_output = original_labels # Fallback, though likely incorrect for PPL
+        #             # --- End REM Loss Path ---
+
+        #         elif has_labels:
+        #             # --- Standard Loss Path (with labels) ---
+        #             inputs_for_std_loss = prepared_inputs.copy()
+        #             if 'batch_idx' in inputs_for_std_loss: inputs_for_std_loss.pop('batch_idx')
+        #             loss, outputs = self.compute_loss(model, inputs_for_std_loss, return_outputs=True)
+        #             logits = outputs.get("logits")
+        #             # labels_for_output remains original_labels
+        #             # --- End Standard Loss Path (with labels) ---
+
+        #         else:
+        #             # --- No Labels Path ---
+        #             loss = None
+        #             inputs_for_fwd = prepared_inputs.copy()
+        #             if 'batch_idx' in inputs_for_fwd: inputs_for_fwd.pop('batch_idx')
+        #             outputs = model(**inputs_for_fwd)
+        #             logits = outputs.get("logits")
+        #             labels_for_output = None
+        #             # --- End No Labels Path ---
+
+        # # Detach outputs
+        # if loss is not None: loss = loss.mean().detach()
+        # if logits is not None: logits = nested_detach(logits)
+        # if labels_for_output is not None: labels_for_output = nested_detach(labels_for_output) # Detach generated labels too
+
+        # if prediction_loss_only:
+        #     logits = None
+        #     labels_for_output = None
+
+        # # Ensure tuple structure (loss, logits, labels)
+        # final_output = (loss, logits, labels_for_output)
+
+        # # Log loss if computed
+        # if loss is not None and self.state.is_world_process_zero:
+        #      loss_key = "REM loss" if self.args.loss_type == "rem" else "CE loss"
+        #      logger.debug(f"[prediction_step] Eval {loss_key}: {loss.item():.4f}")
+
+        # return final_output
 
     def evaluate(
         self,
@@ -657,10 +711,25 @@ class ADMMTrainer(Trainer):
         """
         Run evaluation and returns metrics. Standard implementation.
         """
+        override = eval_dataset is not None
+        eval_dataset = eval_dataset if override else self.eval_dataset
+        if isinstance(eval_dataset, dict):
+            metrics = {}
+            for eval_dataset_name, _eval_dataset in eval_dataset.items():
+                dataset_metrics = self.evaluate(
+                    eval_dataset=_eval_dataset if override else eval_dataset_name,
+                    ignore_keys=ignore_keys,
+                    metric_key_prefix=f"{metric_key_prefix}_{eval_dataset_name}",
+                )
+                metrics.update(dataset_metrics)
+            return metrics
         # memory metrics - must set up as early as possible
         self._memory_tracker.start()
 
         eval_dataloader = self.get_eval_dataloader(eval_dataset)
+        if self.is_fsdp_xla_v2_enabled:
+            eval_dataloader = tpu_spmd_dataloader(eval_dataloader)
+
         start_time = time.time()
 
         eval_loop = self.prediction_loop if self.args.use_legacy_prediction_loop else self.evaluation_loop
@@ -686,8 +755,7 @@ class ADMMTrainer(Trainer):
                 num_steps=math.ceil(output.num_samples / total_batch_size),
             )
         )
-        if self.is_world_process_zero():
-            self.log(output.metrics)
+        self.log(output.metrics)
 
         self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, output.metrics)
 
@@ -797,8 +865,12 @@ class ADMMTrainer(Trainer):
 
             # Update containers
             if losses is not None:
-                losses = self.gather_function((losses.repeat(batch_size)))
-                all_losses.add(losses)
+                # losses = self.gather_function((losses.repeat(batch_size)))
+                # all_losses.add(losses)
+                # print(f"DEBUG: Rank {self.accelerator.process_index} - Loss before gather: {losses.item()}")
+                gathered_losses = self.gather_function((losses.repeat(batch_size)))
+                # print(f"DEBUG: Rank {self.accelerator.process_index} - Loss after gather: {gathered_losses}")
+                all_losses.add(gathered_losses)
             if inputs_decode is not None:
                 inputs_decode = self.accelerator.pad_across_processes(inputs_decode, dim=1, pad_index=-100)
                 inputs_decode = self.gather_function((inputs_decode))
@@ -920,139 +992,14 @@ class ADMMTrainer(Trainer):
                 metrics[f"{metric_key_prefix}_{key}"] = metrics.pop(key)
 
         return EvalLoopOutput(predictions=all_preds, label_ids=all_labels, metrics=metrics, num_samples=num_samples)
+    
+    def _is_dtensor(self,x):
+        return hasattr(x, "to_local")
 
-    # def evaluation_loop(
-    #     self,
-    #     dataloader: DataLoader,
-    #     description: str,
-    #     prediction_loss_only: Optional[bool] = None,
-    #     ignore_keys: Optional[List[str]] = None,
-    #     metric_key_prefix: str = "eval",
-    # ) -> EvalLoopOutput:
-    #     """
-    #     Prediction/evaluation loop, shared by `Trainer.evaluate()` and `Trainer.predict()`.
-    #     Refactored to follow a more robust distributed evaluation pattern:
-    #     1. Accumulate metrics locally on each process inside the loop.
-    #     2. Perform a single synchronization (all_reduce) after the loop.
-    #     """
-    #     args = self.args
-    #     prediction_loss_only = prediction_loss_only if prediction_loss_only is not None else args.prediction_loss_only
-
-    #     model = self._wrap_model(self.model, training=False, dataloader=dataloader)
-        
-    #     if not self.is_in_train:
-    #         if args.fp16_full_eval: model = model.half()
-    #         elif args.bf16_full_eval: model = model.bfloat16()
-
-    #     batch_size = self.args.eval_batch_size
-    #     num_examples = self.num_examples(dataloader)
-    #     if self.is_world_process_zero():
-    #         logger.info(f"***** Running {description} *****")
-    #         if has_length(dataloader):
-    #             logger.info(f"  Num examples = {num_examples}")
-    #         else:
-    #             logger.info("  Num examples: Unknown")
-    #         logger.info(f"  Batch size = {batch_size}")
-
-    #     model.eval()
-    #     self.callback_handler.eval_dataloader = dataloader
-    #     if args.past_index >= 0: self._past = None
-
-    #     # Initialize local containers for accumulation
-    #     losses_host_list = []
-    #     total_ce_loss_sum = 0.0
-    #     total_valid_tokens = 0
-    #     observed_num_examples = 0
-
-    #     # Main evaluation loop: accumulate locally
-    #     for step, inputs in enumerate(dataloader):
-    #         observed_num_examples += find_batch_size(inputs)
-    #         loss, logits, labels = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
-
-    #         if loss is not None:
-    #             losses = self._nested_gather(loss.repeat(batch_size))
-    #             losses_host_list.append(losses)
-
-    #         # --- OPTIMIZATION: Accumulate CE loss components locally ---
-    #         if logits is not None and labels is not None:
-    #             # Move to device for calculation
-    #             shift_logits = logits[..., :-1, :].contiguous().to(self.args.device)
-    #             shift_labels = labels[..., 1:].contiguous().to(self.args.device)
-                
-    #             # Use reduction='sum' to avoid averaging over potentially different batch sizes
-    #             loss_fct = torch.nn.CrossEntropyLoss(reduction='sum')
-    #             with torch.no_grad():
-    #                 batch_ce_loss_sum = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-                    
-    #                 # Count valid (non-padded) tokens
-    #                 valid_tokens_mask = shift_labels != -100
-    #                 batch_valid_tokens = valid_tokens_mask.sum()
-
-    #             # Accumulate locally as float to reduce GPU memory pressure
-    #             total_ce_loss_sum += batch_ce_loss_sum.item()
-    #             total_valid_tokens += batch_valid_tokens.item()
-    #         # --- END OPTIMIZATION ---
-
-    #         self.control = self.callback_handler.on_prediction_step(args, self.state, self.control)
-
-    #     if args.past_index and hasattr(self, "_past"): delattr(self, "_past")
-
-    #     # --- Synchronization and Metric Calculation (after the loop) ---
-    #     metrics = {}
-
-    #     # 1. Calculate Mean Original Loss (e.g., REM loss)
-    #     if losses_host_list:
-    #         losses_host = torch.cat(losses_host_list)
-    #         if self.args.world_size > 1 and torch.distributed.is_available() and torch.distributed.is_initialized():
-    #             losses_host = distributed_concat(losses_host)
-    #         all_losses = nested_numpify(losses_host)
-    #         if len(all_losses) > 0:
-    #             loss_key = f"{metric_key_prefix}_rem_loss" if self.args.loss_type == "rem" else f"{metric_key_prefix}_loss"
-    #             metrics[loss_key] = all_losses.mean().item()
-
-    #     # 2. Synchronize and Calculate Perplexity
-    #     # Use a robust check for distributed environment
-    #     if self.args.world_size > 1 and torch.distributed.is_available() and torch.distributed.is_initialized():
-    #         # Create tensors on the correct device for all_reduce
-    #         total_ce_loss_sum_tensor = torch.tensor(total_ce_loss_sum, device=self.args.device)
-    #         total_valid_tokens_tensor = torch.tensor(total_valid_tokens, device=self.args.device, dtype=torch.long)
-            
-    #         # Perform a single all_reduce for both values
-    #         torch.distributed.all_reduce(total_ce_loss_sum_tensor, op=torch.distributed.ReduceOp.SUM)
-    #         torch.distributed.all_reduce(total_valid_tokens_tensor, op=torch.distributed.ReduceOp.SUM)
-            
-    #         total_ce_loss_sum = total_ce_loss_sum_tensor.item()
-    #         total_valid_tokens = total_valid_tokens_tensor.item()
-
-    #     if total_valid_tokens > 0:
-    #         mean_ce_loss = total_ce_loss_sum / total_valid_tokens
-    #         metrics[f"{metric_key_prefix}_ce_loss"] = mean_ce_loss
-    #         try:
-    #             metrics[f"{metric_key_prefix}_perplexity"] = math.exp(mean_ce_loss)
-    #         except OverflowError:
-    #             metrics[f"{metric_key_prefix}_perplexity"] = float("inf")
-        
-    #     # --- FSDP FIX: Perform residual calculation in a distributed manner ---
-    #     # No longer gathering state to rank 0. Each process calculates its local
-    #     # residual, and then we all_reduce the result.
-        # primal_residual = self.calculate_primal_residual(
-        #     metric_key_prefix=metric_key_prefix
-        # )
-        # dual_residual = self.calculate_dual_residual(
-        #     metric_key_prefix=metric_key_prefix
-        # )
-        # # Only update metrics on the main process to avoid redundancy in logs
-        # if self.is_world_process_zero():
-        #     metrics.update(primal_residual)
-        #     metrics.update(dual_residual)
-    #     # --- END FSDP FIX ---
-
-    #     metrics = denumpify_detensorize(metrics)
-    #     if hasattr(self, "jit_compilation_time"):
-    #         metrics[f"{metric_key_prefix}_jit_compilation_time"] = self.jit_compilation_time
-
-    #     return EvalLoopOutput(predictions=None, label_ids=None, metrics=metrics, num_samples=observed_num_examples)
-
+    def _loc(self,x):
+        # Return local shard if DTensor, otherwise the tensor itself
+        return x.to_local() if self._is_dtensor(x) else x
+    
     def calculate_primal_residual(
         self,
         metric_key_prefix: str = "eval",
@@ -1065,7 +1012,6 @@ class ADMMTrainer(Trainer):
         """
         unwrapped_optimizer = self.optimizer.optimizer if hasattr(self.optimizer, 'optimizer') else self.optimizer
         
-        # --- FSDP FIX: Initialize as tensors for accumulation on each process's device ---
         local_primal_residual_sq = torch.tensor(0.0, device=self.args.device)
         local_weight_norm_sq = torch.tensor(0.0, device=self.args.device)
         
@@ -1075,16 +1021,15 @@ class ADMMTrainer(Trainer):
             for param in group['params']:
                 if param in unwrapped_optimizer.state:
                     state = unwrapped_optimizer.state[param]
-                    w = param
-                    z = state['split']
-                    local_primal_residual_sq += torch.norm(w - z).pow(2)
-                    local_weight_norm_sq += torch.norm(w).pow(2)
+                    w = self._loc(param)
+                    z = self._loc(state['split'])
+                    local_primal_residual_sq += torch.sum((w - z) ** 2)
+                    local_weight_norm_sq += torch.sum(w ** 2)
         
         # Synchronize across all processes
         if self.args.world_size > 1 and dist.is_initialized():
             dist.all_reduce(local_primal_residual_sq, op=dist.ReduceOp.SUM)
             dist.all_reduce(local_weight_norm_sq, op=dist.ReduceOp.SUM)
-        # --- END FSDP FIX ---
 
         # Now all processes have the global sum. Convert to float.
         primal_residual = torch.sqrt(local_primal_residual_sq).item()
@@ -1104,7 +1049,6 @@ class ADMMTrainer(Trainer):
         """
         unwrapped_optimizer = self.optimizer.optimizer if hasattr(self.optimizer, 'optimizer') else self.optimizer
         
-        # --- FSDP FIX: Initialize as a tensor on each process's device ---
         local_dual_residual_sq = torch.tensor(0.0, device=self.args.device)
         lmda = self.args.admm_lmda 
 
@@ -1114,18 +1058,17 @@ class ADMMTrainer(Trainer):
             for param in group['params']:
                 if param in unwrapped_optimizer.state:
                     state = unwrapped_optimizer.state[param]
-                    w = param
-                    u = state['dual']
-                    z = state['split']
+                    w = self._loc(param)
+                    u = self._loc(state['dual'])
+                    z = self._loc(state['split'])
                     p_sparsity = state.get('sparsity', unwrapped_optimizer.sparsity)
                     
                     z_new = projection([w + u], sparsity=p_sparsity, prune_n=unwrapped_optimizer.prune_n, prune_m=unwrapped_optimizer.prune_m, comparison_group=unwrapped_optimizer.comparison_group)[0]
-                    local_dual_residual_sq += torch.norm(z_new - z, p=2).pow(2)
+                    local_dual_residual_sq += torch.sum((z_new - z) ** 2)
 
         # Synchronize across all processes
         if self.args.world_size > 1 and dist.is_initialized():
             dist.all_reduce(local_dual_residual_sq, op=dist.ReduceOp.SUM)
-        # --- END FSDP FIX ---
 
         dual_residual = torch.sqrt(local_dual_residual_sq).item()
         return {
@@ -1139,12 +1082,10 @@ class ADMMTrainer(Trainer):
         """
         Helper to compute REM loss. Now gets REM labels directly from the input batch.
         """
-        # --- FIX: Get REM labels from the input dictionary ---
         if 'rem_labels' not in inputs:
             raise ValueError("REM loss requires 'rem_labels' in the input batch.")
         
         target_labels_rem = inputs.pop("rem_labels")
-        # --- END FIX ---
 
         if 'batch_idx' in inputs:
             inputs.pop("batch_idx") # batch_idx is no longer needed here
@@ -1499,7 +1440,6 @@ class ADMMTrainer(Trainer):
             step = -1
             for step, inputs in enumerate(epoch_iterator):
                 total_batched_samples += 1
-
                 if self.args.include_num_input_tokens_seen:
                     main_input_name = getattr(self.model, "main_input_name", "input_ids")
                     if main_input_name not in inputs:

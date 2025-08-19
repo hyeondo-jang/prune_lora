@@ -860,5 +860,3 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         logging.info("Starting ADMM training on all processes...")
     
     trainer.train()
-
-
