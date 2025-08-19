@@ -23,13 +23,12 @@ FLAGS = flags.FLAGS
 
 
 def main(argv):
-    ## for cpu backend
-    dist.init_process_group(backend='cuda:nccl,cpu:gloo')
     global FLAGS
     arguments = FLAGS.flag_values_dict() 
-
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    ## delete afterwards
+    if int(os.environ.get("WORLD_SIZE", "1")) > 1:
+        dist.init_process_group(backend='cuda:nccl,cpu:gloo')
+        
     if FLAGS.wandb and local_rank == 0:
         wandb.init(project=FLAGS.wandb_project)
 
