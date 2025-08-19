@@ -28,7 +28,7 @@ def main(argv):
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     if int(os.environ.get("WORLD_SIZE", "1")) > 1:
         dist.init_process_group(backend='cuda:nccl,cpu:gloo')
-        
+
     if FLAGS.wandb and local_rank == 0:
         wandb.init(project=FLAGS.wandb_project)
 
@@ -57,7 +57,8 @@ def main(argv):
 
     if local_rank == 0:
         logging.info(f"loading llm model {FLAGS.model}")
-    model = get_llm(FLAGS.model,FLAGS.seqlen)
+
+    model = get_llm(FLAGS.model, FLAGS.seqlen)
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(FLAGS.model, use_fast=False)
 
@@ -65,7 +66,8 @@ def main(argv):
     device = torch.device(f"cuda:{local_rank}")
     torch.cuda.set_device(device)
 
-    if not (FLAGS.prune_method == 'global_admm'):
+    if not (FLAGS.prune_method == 'global_admm'): ## local methods (fp32 casting is done in layer-wise)
+        model = model.to(torch.float16)
         model = model.to(device)
     else:
         model = model.to('cpu')
