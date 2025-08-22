@@ -167,6 +167,7 @@ def projection(
         mesh = weight.device_mesh
         orig_places = weight.placements
         global_shape = tuple(weight.shape)
+        global_stride = weight.stride()
 
         if isinstance(a, DTensor) and a.placements != orig_places:
             a = a.redistribute(placements=orig_places)
@@ -175,7 +176,7 @@ def projection(
             w_local = weight.to_local().detach().clone()
             a_local = _a_to_local_if_needed(a)
             new_local = _proj_impl_dense(w_local, a_local, sparsity, prune_n, prune_m, comparison_group)
-            new_dt = DTensor.from_local(new_local, device_mesh=mesh, placements=orig_places, size=global_shape)
+            new_dt = DTensor.from_local(new_local, device_mesh=mesh, placements=orig_places,shape=global_shape,stride=global_stride)
             out.append(new_dt)
         else:
             rep = weight.redistribute(placements=[Replicate()])
