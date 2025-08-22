@@ -1539,35 +1539,50 @@ class ADMMTrainer(Trainer):
                     if is_last_step_and_steps_less_than_grad_acc:
                         self.accelerator.gradient_state._set_sync_gradients(True)
 
-                    # Gradient clipping
-                    if args.max_grad_norm is not None and args.max_grad_norm > 0:
+                    # Gradient clipping or normalization
+                    if (args.max_grad_norm is not None and args.max_grad_norm > 0) or args.normalize_grad:
                         # deepspeed does its own clipping
 
+                        # Determine the norm type for clip_grad_norm_
+                        max_norm = float('inf') if args.normalize_grad else args.max_grad_norm
+
                         if is_sagemaker_mp_enabled() and args.fp16:
-                            _grad_norm = self.optimizer.clip_master_grads(args.max_grad_norm)
+                            # Note: smp clip_master_grads does not support returning the norm.
+                            # Gradient normalization would need a custom implementation here if used with smp.
+                            _grad_norm = self.optimizer.clip_master_grads(max_norm)
                         elif self.use_apex:
                             # Revert to normal clipping otherwise, handling Apex or full precision
                             _grad_norm = nn.utils.clip_grad_norm_(
                                 amp.master_params(self.optimizer),
-                                args.max_grad_norm,
+                                max_norm,
                             )
                         else:
+                            # This will handle FSDP, DDP, etc. correctly.
+                            # It returns the total norm of the parameters before clipping.
                             _grad_norm = self.accelerator.clip_grad_norm_(
                                 model.parameters(),
-                                args.max_grad_norm,
+                                max_norm,
                             )
 
+                        # For DeepSpeed, get_global_grad_norm is the way to get the norm
                         if (
                             is_accelerate_available()
                             and self.accelerator.distributed_type == DistributedType.DEEPSPEED
                         ):
                             grad_norm = model.get_global_grad_norm()
-                            # In some cases the grad norm may not return a float
                             if hasattr(grad_norm, "item"):
                                 grad_norm = grad_norm.item()
                         else:
                             grad_norm = _grad_norm
-                    
+
+                    if args.normalize_grad:
+                        # If normalization is enabled, divide gradients by the calculated norm
+                        if args.normalize_grad and grad_norm is not None:
+                            if grad_norm > 1e-9: # Avoid division by zero
+                                params_with_grad = [p for p in model.parameters() if p.grad is not None]
+                                for p in params_with_grad:
+                                    p.grad.detach().div_(grad_norm)
+                                    
                     unwrapped_optimizer = self.optimizer.optimizer if hasattr(self.optimizer, 'optimizer') else self.optimizer
                     is_dual_update_step = (unwrapped_optimizer.current_step + 1) % unwrapped_optimizer.interval == 0
 
