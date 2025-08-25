@@ -29,7 +29,7 @@ class ADMM(torch.optim.Adam):
         interval: int,
         alpha: float = 1.0,
         lmda: float = 1e-3, # Initial lmda for new parameters
-        lmda_schedule_mode: str = 'adaptive_boyd', # New: 'constant', 'linear', 'cosine', 'adaptive_boyd'
+        lmda_schedule_mode: str = 'constant', # New: 'constant', 'linear', 'cosine', 'adaptive_boyd'
         total_steps: int = 1, # New: Total steps for fixed lmda schedules
         mu: float = 1.5, # For adaptive penalty
         tau_incr: float = 2.0, # For adaptive penalty
@@ -74,11 +74,6 @@ class ADMM(torch.optim.Adam):
         self.accelerator = accelerator
         self.current_step = 0
         self.mask_diff = 0.0  # average flip ratio across ADMM groups at last interval update
-
-        # Remove per-group lmda setup, as lmda is now per-parameter
-        # for g in self.param_groups:
-        #     if g.get("admm", False) and "lmda" not in g:
-        #         g["lmda"] = self.lmda_default
 
         # Lazy-initialized per-parameter ADMM state: 'dual', 'split', 'sparsity', 'importance', 'last_grad_for_importance'
 

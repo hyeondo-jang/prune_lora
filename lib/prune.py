@@ -669,6 +669,9 @@ class AdmmTrainingArguments(TrainingArguments):
     admm_lmda: float = field(default=0.001, metadata={"help": "Lambda (rho) penalty parameter for ADMM."})
     admm_initial_lmda: float = field(default=0.0, metadata={"help": "Initial lambda (rho) for ADMM for penalty scheduling. defaults to 0.0."})
     admm_lmda_schedule_mode: str = field(default='constant', metadata={"help": "Mode for lambda schedule (linear/cosine/exponential/constant)."})
+    admm_mu: float = field(default=10.0, metadata={"help": "Mu parameter for ADMM penalty update."})
+    admm_tau_incr: float = field(default=2.0, metadata={"help": "Tau increase factor for ADMM."})
+    admm_tau_decr: float = field(default=2.0, metadata={"help": "Tau decrease factor for ADMM."})
     admm_sparsity_schedule_mode: str = field(default='constant', metadata={"help": "Mode for sparsity schedule (linear/cosine/exponential/constant)."})
     admm_interval: int = field(default=32, metadata={"help": "Interval for ADMM projection and dual updates."})
     admm_projection_comparison_group: str = field(default='layer', metadata={"help": "Comparison group for ADMM projection (layer/column/row)."})
@@ -740,6 +743,9 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         admm_adaptive_sparsity_samples=FLAGS.admm_adaptive_sparsity_samples,
         admm_alpha=FLAGS.admm_alpha,
         admm_lmda=FLAGS.admm_lmda,
+        admm_mu = FLAGS.admm_mu,
+        admm_tau_incr = FLAGS.admm_tau_incr,
+        admm_tau_decr = FLAGS.admm_tau_decr,
         admm_initial_lmda=FLAGS.admm_initial_lmda,
         admm_lmda_schedule_mode=FLAGS.admm_lmda_schedule_mode,
         sparsity_ratio=FLAGS.sparsity_ratio,

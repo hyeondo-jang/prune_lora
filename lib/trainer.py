@@ -492,7 +492,7 @@ class ADMMTrainer(Trainer):
                     projection_fn= projection,
                     alpha=self.args.admm_alpha,
                     lmda=self.args.admm_lmda, sparsity=self.args.sparsity_ratio, interval=self.args.admm_interval,
-                    lmda_schedule_mode=self.args.admm_lmda_schedule_mode, total_steps=max_steps,
+                    lmda_schedule_mode=self.args.admm_lmda_schedule_mode, total_steps=self.args.max_steps,
                     mu=self.args.admm_mu, tau_incr=self.args.admm_tau_incr, tau_decr=self.args.admm_tau_decr, final_lmda=self.args.admm_lmda,
                     lr=self.args.learning_rate, prune_n=self.args.prune_n, prune_m=self.args.prune_m, comparison_group=self.args.admm_projection_comparison_group,
                     projection_mode=self.args.admm_projection_mode,
@@ -1636,7 +1636,7 @@ class ADMMTrainer(Trainer):
                         if not isinstance(self.lr_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                             self.lr_scheduler.step()
                         self.sparsity_scheduler.step()
-                        self.penalty_scheduler.step()
+                        # self.penalty_scheduler.step()
 
                     model.zero_grad()
                     self.state.global_step += 1
