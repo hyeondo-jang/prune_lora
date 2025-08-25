@@ -198,7 +198,7 @@ if __name__ == '__main__':
     flags.DEFINE_float('admm_alpha', 1.0, 'Alpha parameter for ADMM over-relaxation. default is 1.0')
     flags.DEFINE_float('admm_lmda', 0.01, 'Lambda penalty parameter for ADMM.')
     flags.DEFINE_float('admm_initial_lmda',0.0, 'Initial lambda value for ADMM (if using schedule).')
-    flags.DEFINE_enum('admm_lmda_schedule_mode', 'constant', ['constant','linear','log','cosine'], 'Mode for lambda schedule (e.g., linear, cosine).')
+    flags.DEFINE_enum('admm_lmda_schedule_mode', 'constant', ['constant','linear','log','cosine', 'adaptive_boyd'], 'Mode for lambda schedule (e.g., linear, cosine).')
     flags.DEFINE_enum('admm_sparsity_schedule_mode', 'constant', ['constant','linear','exponential','cosine','cubic','cubic'], 'Mode for sparsity schedule (e.g., cubic, linear).')
     flags.DEFINE_float('admm_peak_sparsity_step', 1, 'Step ratio (0-1) at which peak sparsity is reached in ADMM training. e.g. 0.3 means peak sparsity is reached at step*0.3 (used only when admm_sparsity_schedule_mode is not constant)')
     flags.DEFINE_integer('admm_interval', 2, 'Interval for ADMM projection and dual updates.')
