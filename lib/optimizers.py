@@ -255,7 +255,7 @@ class ADMM(torch.optim.Adam):
                 z_new_l = _loc(z_new)
 
                 r_primal_norm = torch.norm(w_l.detach() - z_new_l.detach()) # ||w - z_new||
-                r_dual_norm = torch.norm(z_new_l.detach() - s_l.detach()) # ||z_new - z_old||
+                r_dual_norm = current_lmda * torch.norm(z_new_l.detach() - s_l.detach()) # ||z_new - z_old||
 
                 # Adaptive lmda update (Boyd's scheme) or fixed schedule
                 new_lmda_for_param = current_lmda
