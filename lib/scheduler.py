@@ -4,7 +4,7 @@ from absl import logging
 ##TODO: Fix schedulers for state-ful admm compatibility, and distributed training
 class PenaltyScheduler:
 
-    def __init__(self, optimizer,initial_lmda, final_lmda, total_steps, mu=1.5, tau_incr=2, tau_decr=2, mode='linear', splits=None):
+    def __init__(self, optimizer,initial_lmda, final_lmda, total_steps, mode='linear'):
         """
         A scheduler for penalty parameter (lmda).
         
@@ -13,7 +13,7 @@ class PenaltyScheduler:
             initial_lmda (float): initial value of lambda
             final_lmdas (float): final value of lambda
             total_steps (int): Total number of steps for scheduling.
-            mode (str): Scheduling mode ( 'constant','linear','cosine','adaptive').
+            mode (str): Scheduling mode ( 'constant','linear','cosine').
         """
         self.optimizer = optimizer
         self.total_steps = total_steps
@@ -21,24 +21,21 @@ class PenaltyScheduler:
         self.mode = mode.lower()
         self.initial_lmda = initial_lmda
         self.final_lmda = final_lmda
-        self.mu = mu
-        self.tau_incr = tau_incr
-        self.tau_decr = tau_decr
         self.step_count = 0
 
-    def step(self, r_primal_norms=None, r_dual_norms=None, supp_change_rates=None):
+    def step(self):
         """Update the scheduler step."""
         self.step_count += 1
         self.step_count = min(self.step_count, self.total_steps)  # Clamp to total_steps
 
-        if self.mode == 'adaptive_boyd':
-            self._update_adaptive_lmda(r_primal_norms, r_dual_norms)
-        else:
-            new_lmda = self._calculate_lmda_for_fixed_modes()
-            for group in self.optimizer.param_groups:
-                if group.get('admm', False):
-                    group['lmda'] = new_lmda
-                    # logging.info(f"Updated lmda to {new_lmda} for group {group['name']} at step {self.step_count}")
+        new_lmda = self._calculate_lmda_for_fixed_modes()
+        for group in self.optimizer.param_groups:
+            if group.get('admm', False):
+                # For per-parameter lmda, this scheduler only sets the initial/default lmda for the group.
+                # The actual per-parameter lmda is managed by the ADMM optimizer itself.
+                # This line might be removed or re-purposed if group['lmda'] is no longer used.
+                group['lmda'] = new_lmda
+                # logging.info(f"Updated lmda to {new_lmda} for group {group['name']} at step {self.step_count}")
             
     def _calculate_lmda_for_fixed_modes(self):
         """Calculate the current lmda based on the mode for non-adaptive modes."""
@@ -61,27 +58,6 @@ class PenaltyScheduler:
         
         else:
             raise ValueError(f"Unknown mode: {self.mode}")
-
-    def _update_adaptive_lmda(self, r_primal_norms, r_dual_norms):
-        """Update lmda for each ADMM group based on adaptive Boyd's scheme."""
-        assert r_primal_norms is not None and r_dual_norms is not None, "adaptive_boyd requires residuals"
-
-        for group in self.optimizer.param_groups:
-            if group.get('admm', False):
-                current_lmda = group.get('lmda', self.initial_lmda) # Use initial_lmda as fallback
-                
-                new_lmda = current_lmda
-                # Ensure residuals are tensors and on the same device for comparison
-                # Assuming r_primal_norms and r_dual_norms are already global sums
-                if r_primal_norms > self.mu * r_dual_norms:
-                    new_lmda = current_lmda * self.tau_incr
-                elif r_dual_norms.item() > self.mu * r_primal_norms.item():
-                    new_lmda = current_lmda / self.tau_decr
-                
-                # Clamp the new value
-                new_lmda = max(min(new_lmda, self.final_lmda), 1e-4)
-                group['lmda'] = new_lmda
-                # logging.info(f"Updated lmda to {new_lmda} for group {group['name']} at step {self.step_count}")
         
 class SparsityScheduler:
     def __init__(self, optimizer, initial_sparsity, final_sparsity, start_step, final_step, mode='cubic'):

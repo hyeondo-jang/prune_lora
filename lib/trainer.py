@@ -492,6 +492,8 @@ class ADMMTrainer(Trainer):
                     projection_fn= projection,
                     alpha=self.args.admm_alpha,
                     lmda=self.args.admm_lmda, sparsity=self.args.sparsity_ratio, interval=self.args.admm_interval,
+                    lmda_schedule_mode=self.args.admm_lmda_schedule_mode, total_steps=max_steps,
+                    mu=self.args.admm_mu, tau_incr=self.args.admm_tau_incr, tau_decr=self.args.admm_tau_decr, final_lmda=self.args.admm_lmda,
                     lr=self.args.learning_rate, prune_n=self.args.prune_n, prune_m=self.args.prune_m, comparison_group=self.args.admm_projection_comparison_group,
                     projection_mode=self.args.admm_projection_mode,
                     importance_ema=self.args.admm_importance_ema,
@@ -1007,8 +1009,7 @@ class ADMMTrainer(Trainer):
     ) -> Dict[str, float]:
         """
         Computes primal and relative residuals in a distributed-friendly way.
-        Each process computes residuals on its local shard of optimizer states,
-        and then results are summed across all processes via all_reduce.
+        Iterates through per-parameter optimizer states to get current w and z.
         """
         unwrapped_optimizer = self.optimizer.optimizer if hasattr(self.optimizer, 'optimizer') else self.optimizer
         
@@ -1046,6 +1047,7 @@ class ADMMTrainer(Trainer):
     ) -> Dict[str, float]:
         """
         Computes the dual residual in a distributed-friendly way using all_reduce.
+        Iterates through per-parameter optimizer states to get current w, u, z, and lmda.
         """
         unwrapped_optimizer = self.optimizer.optimizer if hasattr(self.optimizer, 'optimizer') else self.optimizer
         
@@ -1055,7 +1057,6 @@ class ADMMTrainer(Trainer):
         # Iterate over the local shard of optimizer states
         for group in unwrapped_optimizer.param_groups:
             if not group.get('admm', False): continue
-            current_group_lmda = group.get('lmda', self.args.admm_lmda) # Get current lmda for the group
             for param in group['params']:
                 if param in unwrapped_optimizer.state:
                     state = unwrapped_optimizer.state[param]
@@ -1063,6 +1064,7 @@ class ADMMTrainer(Trainer):
                     u = self._loc(state['dual'])
                     z = self._loc(state['split'])
                     p_sparsity = state.get('sparsity', unwrapped_optimizer.sparsity)
+                    current_param_lmda = state['lmda'] # Get the per-parameter lmda
                     
                     z_new = projection([w + u], sparsity=p_sparsity, prune_n=unwrapped_optimizer.prune_n, prune_m=unwrapped_optimizer.prune_m, comparison_group=unwrapped_optimizer.comparison_group)[0]
                     
@@ -1070,8 +1072,8 @@ class ADMMTrainer(Trainer):
                     param_dual_residual_sq = torch.sum((z_new - z) ** 2)
                     local_dual_residual_sq += param_dual_residual_sq
 
-                    # Calculate scaled dual residual for this parameter using its group's current lmda
-                    local_scaled_dual_residual_sq += (current_group_lmda ** 2) * param_dual_residual_sq
+                    # Calculate scaled dual residual for this parameter using its current lmda
+                    local_scaled_dual_residual_sq += (current_param_lmda ** 2) * param_dual_residual_sq
 
         # Synchronize across all processes
         if self.args.world_size > 1 and dist.is_initialized():
@@ -1634,23 +1636,7 @@ class ADMMTrainer(Trainer):
                         if not isinstance(self.lr_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                             self.lr_scheduler.step()
                         self.sparsity_scheduler.step()
-
-                        # Calculate and pass residuals to penalty scheduler if in adaptive mode
-                        if self.args.admm_lmda_schedule_mode == 'adaptive_boyd':
-                            primal_res = self.calculate_primal_residual()
-                            dual_res = self.calculate_dual_residual()
-                            r_primal_norms = primal_res[f'{self.args.metric_for_best_model}_primal_residual']
-                            r_dual_norms = dual_res[f'{self.args.metric_for_best_model}_scaled_dual_residual']
-                            self.penalty_scheduler.step(r_primal_norms=r_primal_norms, r_dual_norms=r_dual_norms)
-                            if self.is_world_process_zero():
-                                logger.info(f'ADMM Step {self.state.global_step}: Primal Residual: {r_primal_norms:.4f}, Dual Residual: {r_dual_norms:.4f}')
-                                wandb_metrics = {
-                                    'ADMM_primal_residual': r_primal_norms,
-                                    'ADMM_dual_residual': r_dual_norms
-                                }
-                                self.log(wandb_metrics)
-                        else:
-                            self.penalty_scheduler.step()
+                        self.penalty_scheduler.step()
 
                     model.zero_grad()
                     self.state.global_step += 1

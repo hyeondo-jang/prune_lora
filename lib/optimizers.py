@@ -28,7 +28,13 @@ class ADMM(torch.optim.Adam):
         sparsity: float,
         interval: int,
         alpha: float = 1.0,
-        lmda: float = 1e-3,
+        lmda: float = 1e-3, # Initial lmda for new parameters
+        lmda_schedule_mode: str = 'adaptive_boyd', # New: 'constant', 'linear', 'cosine', 'adaptive_boyd'
+        total_steps: int = 1, # New: Total steps for fixed lmda schedules
+        mu: float = 1.5, # For adaptive penalty
+        tau_incr: float = 2.0, # For adaptive penalty
+        tau_decr: float = 2.0, # For adaptive penalty
+        final_lmda: float = 1e-3, # Final lmda for adaptive penalty clamping
         prune_n: int = 0,
         prune_m: int = 0,
         comparison_group: str = "layer",
@@ -44,7 +50,13 @@ class ADMM(torch.optim.Adam):
         self.sparsity        = float(sparsity)
         self.interval        = int(interval)
         self.alpha           = float(alpha)
-        self.lmda_default    = float(lmda)
+        self.lmda_default    = float(lmda) # Initial lmda for new parameters
+        self.lmda_schedule_mode = lmda_schedule_mode.lower()
+        self.total_steps     = int(total_steps)
+        self.mu              = float(mu)
+        self.tau_incr        = float(tau_incr)
+        self.tau_decr        = float(tau_decr)
+        self.final_lmda      = float(final_lmda)
         self.prune_n         = int(prune_n)
         self.prune_m         = int(prune_m)
         self.comparison_group = comparison_group.lower()
@@ -55,16 +67,18 @@ class ADMM(torch.optim.Adam):
             raise ValueError(f"comparison_group must be 'layer'|'column'|'row', got {self.comparison_group}")
         if self.projection_mode not in ("identity", "gradient", "activation"):
             raise ValueError(f"projection_mode must be 'identity'|'gradient'|'activation', got {self.projection_mode}")
+        if self.lmda_schedule_mode not in ('constant', 'linear', 'cosine', 'log', 'adaptive_boyd'):
+            raise ValueError(f"lmda_schedule_mode must be 'constant', 'linear', 'cosine', 'log', or 'adaptive_boyd', got {self.lmda_schedule_mode}")
 
         # Runtime helpers
         self.accelerator = accelerator
         self.current_step = 0
         self.mask_diff = 0.0  # average flip ratio across ADMM groups at last interval update
 
-        # Per-group λ setup (preserve your per-group lmda semantics)
-        for g in self.param_groups:
-            if g.get("admm", False) and "lmda" not in g:
-                g["lmda"] = self.lmda_default
+        # Remove per-group lmda setup, as lmda is now per-parameter
+        # for g in self.param_groups:
+        #     if g.get("admm", False) and "lmda" not in g:
+        #         g["lmda"] = self.lmda_default
 
         # Lazy-initialized per-parameter ADMM state: 'dual', 'split', 'sparsity', 'importance', 'last_grad_for_importance'
 
@@ -94,8 +108,9 @@ class ADMM(torch.optim.Adam):
         st["dual"] = torch.zeros_like(p, memory_format=torch.preserve_format)
         # Per-parameter sparsity (allow future customization)
         st["sparsity"] = self.sparsity
-        # Store the lmda for this group to track changes for dual variable rescaling
-        st["prev_lmda"] = group.get("lmda", self.lmda_default)
+        # Per-parameter lmda for adaptive penalty
+        st["lmda"] = group.get("lmda", self.lmda_default)
+        st["prev_lmda"] = st["lmda"]
 
         # Optional importance buffer (shape strategy depends on projection mode)
         init_importance = None
@@ -133,13 +148,13 @@ class ADMM(torch.optim.Adam):
         for g in self.param_groups:
             if not g.get("admm", False):
                 continue
-            lmda = float(g.get("lmda", self.lmda_default))
             for w in g["params"]:
                 if w.grad is None:
                     continue
                 self._lazy_init_admm_state(w, g)
                 st = self.state[w]
                 dual, split = st["dual"], st["split"]
+                lmda = st["lmda"] # Use per-parameter lmda
 
                 # Work on local shard if DTensor
                 w_l = _loc(w)
@@ -185,7 +200,7 @@ class ADMM(torch.optim.Adam):
             if not g.get("admm", False):
                 continue
             admm_groups += 1
-            lmda = float(g.get("lmda", self.lmda_default))
+            # lmda = float(g.get("lmda", self.lmda_default)) # Removed: lmda is now per-parameter
             weights = list(g["params"])
             if not weights:
                 continue
@@ -202,13 +217,11 @@ class ADMM(torch.optim.Adam):
                 dual  = st["dual"]
                 split = st["split"]
                 spars = st["sparsity"]
+                current_lmda = st["lmda"]
+                previous_lmda = st["prev_lmda"]
 
-                # Get current and previous lmda for dual variable rescaling
-                current_lmda = lmda # lmda for the group is already retrieved above
-                previous_lmda = st.get("prev_lmda", current_lmda)
-
+                # Rescale dual variable based on change in lmda
                 if current_lmda != previous_lmda:
-                    # Rescale dual variable based on change in lmda
                     dual.mul_(previous_lmda / current_lmda)
 
                 # Optional importance update for 'gradient' mode (EMA on reduced axis)
@@ -240,6 +253,46 @@ class ADMM(torch.optim.Adam):
                 # u update: u <- u + α (w - z_new)
                 u_new = dual.detach() + self.alpha * (w.detach() - z_new)
 
+                # Calculate local primal and dual residual norms for adaptive lmda
+                w_l = _loc(w)
+                s_l = _loc(split)
+                d_l = _loc(dual)
+                z_new_l = _loc(z_new)
+
+                r_primal_norm = torch.norm(w_l.detach() - z_new_l.detach()) # ||w - z_new||
+                r_dual_norm = torch.norm(z_new_l.detach() - s_l.detach()) # ||z_new - z_old||
+
+                # Adaptive lmda update (Boyd's scheme) or fixed schedule
+                new_lmda_for_param = current_lmda
+                if self.lmda_schedule_mode == 'adaptive_boyd':
+                    if r_primal_norm > self.mu * r_dual_norm:
+                        new_lmda_for_param = current_lmda * self.tau_incr
+                    elif r_dual_norm > self.mu * r_primal_norm:
+                        new_lmda_for_param = current_lmda / self.tau_decr
+                else:
+                    # Apply fixed schedule (constant, linear, cosine, log)
+                    t = self.current_step
+                    T = self.total_steps
+                    s0 = self.lmda_default
+                    s1 = self.final_lmda # Use final_lmda as the target for schedules
+
+                    if self.lmda_schedule_mode == 'constant':
+                        new_lmda_for_param = s1 # Use final_lmda as the constant value
+                    elif self.lmda_schedule_mode == 'linear':
+                        new_lmda_for_param = s0 + (s1 - s0) * (t / T)
+                    elif self.lmda_schedule_mode == 'cosine':
+                        new_lmda_for_param = s0 + (s1 - s0) * 0.5 * (1 - math.cos(math.pi * t / T))
+                    elif self.lmda_schedule_mode == 'log':
+                        # Avoid log(0); add epsilon
+                        eps = 1e-6
+                        log_t = math.log(t + eps)
+                        log_T = math.log(T + eps)
+                        new_lmda_for_param = s0 + (s1 - s0) * (log_t / log_T)
+                    # No else needed, as validation in __init__ ensures valid mode
+                
+                # Clamp the new lmda value
+                new_lmda_for_param = max(min(new_lmda_for_param, self.final_lmda), 1e-4)
+
                 # Mask flip ratio between old z and new z (local shard)
                 old_local = _loc(split)
                 new_local = _loc(z_new)
@@ -254,6 +307,7 @@ class ADMM(torch.optim.Adam):
                 # In-place state updates (keep tensors allocated on the correct device)
                 dual.copy_(u_new)
                 split.copy_(z_new)
+                st["lmda"] = new_lmda_for_param # Update per-parameter lmda
                 st["prev_lmda"] = current_lmda # Store current lmda for next iteration
 
             # Global reduce of flip/numel (NCCL expects CUDA tensors)
