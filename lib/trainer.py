@@ -1619,9 +1619,15 @@ class ADMMTrainer(Trainer):
                         
                     if is_dual_update_step:
                         mask_diff = unwrapped_optimizer.get_mask_diff()
+                        lmda_stats = unwrapped_optimizer.get_lmda_stats()
                         if self.is_world_process_zero():
-                            logger.info(f'ADMM Step {self.state.global_step}: Mask difference: {mask_diff:.4f}')
-                            wandb_metrics = {'ADMM_mask_difference': mask_diff}  
+                            logger.info(f'ADMM Step {self.state.global_step}: Mask difference: {mask_diff:.4f}, Avg lmda: {lmda_stats["avg_lmda"]:.4e}')
+                            wandb_metrics = {
+                                'ADMM_mask_difference': mask_diff,
+                                'ADMM_avg_lmda': lmda_stats["avg_lmda"],
+                                'ADMM_min_lmda': lmda_stats["min_lmda"],
+                                'ADMM_max_lmda': lmda_stats["max_lmda"]
+                            }  
                             self.log(wandb_metrics)
 
                     self.control = self.callback_handler.on_pre_optimizer_step(args, self.state, self.control)

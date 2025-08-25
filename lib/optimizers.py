@@ -6,7 +6,7 @@ from torch.distributed.tensor import DTensor
 
 import torch
 import torch.distributed as dist
-
+import math 
 def _is_dtensor(x): 
     return hasattr(x, "to_local")
 
@@ -358,6 +358,32 @@ class ADMM(torch.optim.Adam):
         Return the averaged mask flip ratio computed at the last interval update.
         """
         return float(self.mask_diff)
+
+    def get_lmda_stats(self) -> Dict[str, float]:
+        """
+        Calculates and returns statistics (average, min, max) of per-parameter lmda values.
+        """
+        total_lmda = 0.0
+        count = 0
+        min_lmda = float('inf')
+        max_lmda = float('-inf')
+
+        for g in self.param_groups:
+            if not g.get("admm", False):
+                continue
+            for w in g["params"]:
+                if w in self.state:
+                    lmda_val = self.state[w].get("lmda")
+                    if lmda_val is not None:
+                        total_lmda += lmda_val
+                        count += 1
+                        min_lmda = min(min_lmda, lmda_val)
+                        max_lmda = max(max_lmda, lmda_val)
+        
+        if count == 0:
+            return {"avg_lmda": 0.0, "min_lmda": 0.0, "max_lmda": 0.0}
+        else:
+            return {"avg_lmda": total_lmda / count, "min_lmda": min_lmda, "max_lmda": max_lmda}
 
 
 ## LEGACY ADMM
