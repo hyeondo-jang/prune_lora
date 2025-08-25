@@ -1050,11 +1050,12 @@ class ADMMTrainer(Trainer):
         unwrapped_optimizer = self.optimizer.optimizer if hasattr(self.optimizer, 'optimizer') else self.optimizer
         
         local_dual_residual_sq = torch.tensor(0.0, device=self.args.device)
-        lmda = self.args.admm_lmda 
+        local_scaled_dual_residual_sq = torch.tensor(0.0, device=self.args.device) # New tensor for scaled sum
 
         # Iterate over the local shard of optimizer states
         for group in unwrapped_optimizer.param_groups:
             if not group.get('admm', False): continue
+            current_group_lmda = group.get('lmda', self.args.admm_lmda) # Get current lmda for the group
             for param in group['params']:
                 if param in unwrapped_optimizer.state:
                     state = unwrapped_optimizer.state[param]
@@ -1064,16 +1065,25 @@ class ADMMTrainer(Trainer):
                     p_sparsity = state.get('sparsity', unwrapped_optimizer.sparsity)
                     
                     z_new = projection([w + u], sparsity=p_sparsity, prune_n=unwrapped_optimizer.prune_n, prune_m=unwrapped_optimizer.prune_m, comparison_group=unwrapped_optimizer.comparison_group)[0]
-                    local_dual_residual_sq += torch.sum((z_new - z) ** 2)
+                    
+                    # Calculate unscaled dual residual for this parameter
+                    param_dual_residual_sq = torch.sum((z_new - z) ** 2)
+                    local_dual_residual_sq += param_dual_residual_sq
+
+                    # Calculate scaled dual residual for this parameter using its group's current lmda
+                    local_scaled_dual_residual_sq += (current_group_lmda ** 2) * param_dual_residual_sq
 
         # Synchronize across all processes
         if self.args.world_size > 1 and dist.is_initialized():
             dist.all_reduce(local_dual_residual_sq, op=dist.ReduceOp.SUM)
+            dist.all_reduce(local_scaled_dual_residual_sq, op=dist.ReduceOp.SUM) # All-reduce the scaled sum
 
         dual_residual = torch.sqrt(local_dual_residual_sq).item()
+        scaled_dual_residual = torch.sqrt(local_scaled_dual_residual_sq).item() # Take sqrt of the summed squares
+
         return {
             f"{metric_key_prefix}_dual_residual": dual_residual,
-            f"{metric_key_prefix}_scaled_dual_residual": lmda * dual_residual,
+            f"{metric_key_prefix}_scaled_dual_residual": scaled_dual_residual,
         }
     
     # --- Training Methods ---

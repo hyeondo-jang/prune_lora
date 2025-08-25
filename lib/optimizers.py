@@ -94,6 +94,8 @@ class ADMM(torch.optim.Adam):
         st["dual"] = torch.zeros_like(p, memory_format=torch.preserve_format)
         # Per-parameter sparsity (allow future customization)
         st["sparsity"] = self.sparsity
+        # Store the lmda for this group to track changes for dual variable rescaling
+        st["prev_lmda"] = group.get("lmda", self.lmda_default)
 
         # Optional importance buffer (shape strategy depends on projection mode)
         init_importance = None
@@ -201,6 +203,14 @@ class ADMM(torch.optim.Adam):
                 split = st["split"]
                 spars = st["sparsity"]
 
+                # Get current and previous lmda for dual variable rescaling
+                current_lmda = lmda # lmda for the group is already retrieved above
+                previous_lmda = st.get("prev_lmda", current_lmda)
+
+                if current_lmda != previous_lmda:
+                    # Rescale dual variable based on change in lmda
+                    dual.mul_(previous_lmda / current_lmda)
+
                 # Optional importance update for 'gradient' mode (EMA on reduced axis)
                 importance_i = None
                 if self.projection_mode == "gradient":
@@ -244,6 +254,7 @@ class ADMM(torch.optim.Adam):
                 # In-place state updates (keep tensors allocated on the correct device)
                 dual.copy_(u_new)
                 split.copy_(z_new)
+                st["prev_lmda"] = current_lmda # Store current lmda for next iteration
 
             # Global reduce of flip/numel (NCCL expects CUDA tensors)
             if dist.is_initialized():

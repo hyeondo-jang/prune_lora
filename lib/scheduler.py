@@ -73,7 +73,7 @@ class PenaltyScheduler:
                 new_lmda = current_lmda
                 # Ensure residuals are tensors and on the same device for comparison
                 # Assuming r_primal_norms and r_dual_norms are already global sums
-                if r_primal_norms.item() > self.mu * r_dual_norms.item():
+                if r_primal_norms > self.mu * r_dual_norms:
                     new_lmda = current_lmda * self.tau_incr
                 elif r_dual_norms.item() > self.mu * r_primal_norms.item():
                     new_lmda = current_lmda / self.tau_decr
