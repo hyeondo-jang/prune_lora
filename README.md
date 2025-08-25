@@ -59,16 +59,30 @@ python main.py \
 ```
 
 
-### 3. Multigpu (w.i.p)
+### 3. Multi-GPU Training
+
+This project uses Hugging Face `accelerate` for multi-GPU training.
+
+#### Configuration
+First, configure `accelerate` for your environment by running:
+```bash
+accelerate config
+```
+This will guide you through setting up your distributed training environment. Make sure to choose FSDP (`Fully Sharded Data Parallel`) when prompted, as the training pipeline is optimized for it.
+
+#### Launching
+Once configured, you can launch the training script using `accelerate launch`:
 
 ```bash
-torchrun --nproc_per_node=4 main.py \
+accelerate launch main.py \
     --model="meta-llama/Llama-2-7b-hf" \
     --prune_method="global_admm" \
     --sparsity_ratio=0.5 \
     --admm_steps=100 \
     --seed=0
 ```
+`accelerate` will automatically handle the distribution of the workload across the GPUs specified in your configuration.
+
 
 
 ### 6. Configs

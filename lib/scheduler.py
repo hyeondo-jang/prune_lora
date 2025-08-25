@@ -26,18 +26,22 @@ class PenaltyScheduler:
         self.tau_decr = tau_decr
         self.step_count = 0
 
-    def step(self,r_primal_norms=None, r_dual_norms=None, supp_change_rates=None):
+    def step(self, r_primal_norms=None, r_dual_norms=None, supp_change_rates=None):
         """Update the scheduler step."""
         self.step_count += 1
         self.step_count = min(self.step_count, self.total_steps)  # Clamp to total_steps
-        new_lmda = self.get_lmda(r_primal_norms=r_primal_norms, r_dual_norms=r_dual_norms, supp_change_rates=supp_change_rates)
-        for group in self.optimizer.param_groups:
-            if group.get('admm', False):
-                group['lmda'] = new_lmda
-                # logging.info(f"Updated lmda to {new_lmda} for group {group['name']} at step {self.step_count}")
+
+        if self.mode == 'adaptive_boyd':
+            self._update_adaptive_lmda(r_primal_norms, r_dual_norms)
+        else:
+            new_lmda = self._calculate_lmda_for_fixed_modes()
+            for group in self.optimizer.param_groups:
+                if group.get('admm', False):
+                    group['lmda'] = new_lmda
+                    # logging.info(f"Updated lmda to {new_lmda} for group {group['name']} at step {self.step_count}")
             
-    def get_lmda(self, r_primal_norms=None, r_dual_norms=None, supp_change_rates=None):
-        """Calculate the current lmda based on the mode."""
+    def _calculate_lmda_for_fixed_modes(self):
+        """Calculate the current lmda based on the mode for non-adaptive modes."""
         init_lmda = self.initial_lmda
         final_lmda = self.final_lmda
 
@@ -55,27 +59,29 @@ class PenaltyScheduler:
             log_total = math.log(1 + self.total_steps)
             return init_lmda + (final_lmda - init_lmda) * (log_step / log_total)
         
-        elif self.mode == 'adaptive_boyd': ## not yet implemented
-            assert r_primal_norms is not None and r_dual_norms is not None, "adaptive_boyd requires residuals"
-            
-            # Find the current lmda from the first ADMM group
-            current_lmda = self.initial_lmda # Fallback
-            for group in self.optimizer.param_groups:
-                if group.get('admm', False):
-                    current_lmda = group['lmda']
-            
-            new_lmda = current_lmda
-            if r_primal_norms.item() > self.mu * r_dual_norms.item():
-                new_lmda = current_lmda * self.tau_incr
-            elif r_dual_norms.item() > self.mu * r_primal_norms.item():
-                new_lmda = current_lmda / self.tau_decr
-            
-            # Clamp the new value
-            new_lmda = max(min(new_lmda, self.final_lmda), 1e-4)
-            return new_lmda
-
         else:
             raise ValueError(f"Unknown mode: {self.mode}")
+
+    def _update_adaptive_lmda(self, r_primal_norms, r_dual_norms):
+        """Update lmda for each ADMM group based on adaptive Boyd's scheme."""
+        assert r_primal_norms is not None and r_dual_norms is not None, "adaptive_boyd requires residuals"
+
+        for group in self.optimizer.param_groups:
+            if group.get('admm', False):
+                current_lmda = group.get('lmda', self.initial_lmda) # Use initial_lmda as fallback
+                
+                new_lmda = current_lmda
+                # Ensure residuals are tensors and on the same device for comparison
+                # Assuming r_primal_norms and r_dual_norms are already global sums
+                if r_primal_norms.item() > self.mu * r_dual_norms.item():
+                    new_lmda = current_lmda * self.tau_incr
+                elif r_dual_norms.item() > self.mu * r_primal_norms.item():
+                    new_lmda = current_lmda / self.tau_decr
+                
+                # Clamp the new value
+                new_lmda = max(min(new_lmda, self.final_lmda), 1e-4)
+                group['lmda'] = new_lmda
+                # logging.info(f"Updated lmda to {new_lmda} for group {group['name']} at step {self.step_count}")
         
 class SparsityScheduler:
     def __init__(self, optimizer, initial_sparsity, final_sparsity, start_step, final_step, mode='cubic'):

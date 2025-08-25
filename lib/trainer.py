@@ -1624,7 +1624,23 @@ class ADMMTrainer(Trainer):
                         if not isinstance(self.lr_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                             self.lr_scheduler.step()
                         self.sparsity_scheduler.step()
-                        self.penalty_scheduler.step()
+
+                        # Calculate and pass residuals to penalty scheduler if in adaptive mode
+                        if self.args.admm_lmda_schedule_mode == 'adaptive_boyd':
+                            primal_res = self.calculate_primal_residual()
+                            dual_res = self.calculate_dual_residual()
+                            r_primal_norms = primal_res[f'{self.args.metric_for_best_model}_primal_residual']
+                            r_dual_norms = dual_res[f'{self.args.metric_for_best_model}_scaled_dual_residual']
+                            self.penalty_scheduler.step(r_primal_norms=r_primal_norms, r_dual_norms=r_dual_norms)
+                            if self.is_world_process_zero():
+                                logger.info(f'ADMM Step {self.state.global_step}: Primal Residual: {r_primal_norms:.4f}, Dual Residual: {r_dual_norms:.4f}')
+                                wandb_metrics = {
+                                    'ADMM_primal_residual': r_primal_norms,
+                                    'ADMM_dual_residual': r_dual_norms
+                                }
+                                self.log(wandb_metrics)
+                        else:
+                            self.penalty_scheduler.step()
 
                     model.zero_grad()
                     self.state.global_step += 1
