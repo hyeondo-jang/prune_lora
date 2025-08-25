@@ -254,12 +254,11 @@ class ADMM(torch.optim.Adam):
                 d_l = _loc(dual)
                 z_new_l = _loc(z_new)
 
-                r_primal_norm = torch.norm(w_l.detach() - z_new_l.detach()) # ||w - z_new||
-                r_dual_norm = current_lmda * torch.norm(z_new_l.detach() - s_l.detach()) # ||z_new - z_old||
-
                 # Adaptive lmda update (Boyd's scheme) or fixed schedule
                 new_lmda_for_param = current_lmda
                 if self.lmda_schedule_mode == 'adaptive_boyd':
+                    r_primal_norm = torch.norm(w_l.detach() - z_new_l.detach()) # ||w - z_new||
+                    r_dual_norm = current_lmda * torch.norm(z_new_l.detach() - s_l.detach()) # ||z_new - z_old||
                     if r_primal_norm > self.mu * r_dual_norm:
                         new_lmda_for_param = current_lmda * self.tau_incr
                     elif r_dual_norm > self.mu * r_primal_norm:
@@ -286,7 +285,7 @@ class ADMM(torch.optim.Adam):
                     # No else needed, as validation in __init__ ensures valid mode
                 
                 # Clamp the new lmda value
-                new_lmda_for_param = max(min(new_lmda_for_param, self.final_lmda), 1e-4)
+                # new_lmda_for_param = max(new_lmda_for_param, 1e-4)
 
                 # Mask flip ratio between old z and new z (local shard)
                 old_local = _loc(split)
