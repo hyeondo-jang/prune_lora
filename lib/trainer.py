@@ -190,7 +190,6 @@ class ADMMTrainer(Trainer):
         self.is_deepspeed_enabled = getattr(self.accelerator.state, "deepspeed_plugin", None) is not None
         self.is_fsdp_enabled = getattr(self.accelerator.state, "fsdp_plugin", None) is not None
         self.is_tp_enabled = getattr(self.accelerator.state, "torch_tp_plugin", None) is not None
-        self.penalty_scheduler = None
         self.sparsity_scheduler = None
 
     def allocate_nonuniform_sparsity(self): ## TODO: FIX this
@@ -534,14 +533,6 @@ class ADMMTrainer(Trainer):
                 scheduler_specific_kwargs=self.args.lr_scheduler_kwargs,
             )
             self._created_lr_scheduler = True
-        if self.penalty_scheduler is None:
-            self.penalty_scheduler = PenaltyScheduler(
-                optimizer=self.optimizer,
-                initial_lmda=self.args.admm_initial_lmda if self.args.admm_initial_lmda >= 0 else self.args.admm_lmda,
-                final_lmda= self.args.admm_lmda,
-                total_steps=num_training_steps,
-                mode=self.args.admm_lmda_schedule_mode
-            )
         if self.sparsity_scheduler is None:
             if self.args.admm_adaptive_sparsity:
                 NotImplementedError("Adaptive sparsity-aware scheduling is not implemented yet.")
@@ -1642,7 +1633,6 @@ class ADMMTrainer(Trainer):
                         if not isinstance(self.lr_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                             self.lr_scheduler.step()
                         self.sparsity_scheduler.step()
-                        # self.penalty_scheduler.step()
 
                     model.zero_grad()
                     self.state.global_step += 1
