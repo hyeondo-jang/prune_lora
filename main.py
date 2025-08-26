@@ -71,7 +71,8 @@ def main(argv):
         model = model.to(device)
     else:
         model = model.to('cpu')
-    
+        model.config.use_cache = False
+
     logging.info(f"Process {local_rank} uses device {device}")
     if FLAGS.sparsity_ratio != 0:
         logging.info("pruning starts")
