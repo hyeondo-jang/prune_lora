@@ -115,6 +115,11 @@ class ADMM(torch.optim.Adam):
             # We initialize it as a 1-D tensor based on the last dimension of the weight.
             st["importance"] = torch.zeros(_loc(p).shape[-1], device=p.device)
             init_importance = st["importance"]
+        elif self.projection_mode == "momentum":
+            # At initialization, exp_avg_sq is all zeros, so it can't be used for the metric.
+            # We pass `None` for the importance, so the projection function falls back
+            # to standard magnitude-based pruning for the initial z value.
+            init_importance = None
 
         # Initial split z := Proj(p) (must clone to avoid aliasing)
         z0 = self.projection([p.detach()], st["sparsity"], self.prune_n, self.prune_m,
