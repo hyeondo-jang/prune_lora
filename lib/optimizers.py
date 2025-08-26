@@ -65,8 +65,8 @@ class ADMM(torch.optim.Adam):
 
         if self.comparison_group not in ("layer", "column", "row"):
             raise ValueError(f"comparison_group must be 'layer'|'column'|'row', got {self.comparison_group}")
-        if self.projection_mode not in ("identity", "gradient", "activation"):
-            raise ValueError(f"projection_mode must be 'identity'|'gradient'|'activation', got {self.projection_mode}")
+        if self.projection_mode not in ("identity", "gradient", "activation", "momentum"):
+            raise ValueError(f"projection_mode must be 'identity'|'gradient'|'activation'|'momentum', got {self.projection_mode}")
         if self.lmda_schedule_mode not in ('constant', 'linear', 'cosine', 'log', 'adaptive_boyd'):
             raise ValueError(f"lmda_schedule_mode must be 'constant', 'linear', 'cosine', 'log', or 'adaptive_boyd', got {self.lmda_schedule_mode}")
 
@@ -109,7 +109,7 @@ class ADMM(torch.optim.Adam):
 
         # Optional importance buffer (shape strategy depends on projection mode)
         init_importance = None
-        if self.projection_mode != "identity":
+        if self.projection_mode in ("gradient", "activation"):
             # For a Linear layer weight of shape (out, in), the importance is often
             # calculated per-column, resulting in a vector of 'in' elements.
             # We initialize it as a 1-D tensor based on the last dimension of the weight.
@@ -238,6 +238,10 @@ class ADMM(torch.optim.Adam):
                         st["last_grad_for_importance"] = None
                 elif self.projection_mode == "activation":
                     importance_i = st.get("importance", None)
+                elif self.projection_mode == "momentum":
+                    # Pass the second-moment tensor V directly as the importance matrix.
+                    # The projection function will use it to calculate the metric V*(w+u)^2.
+                    importance_i = st.get("exp_avg_sq") # This is V
 
                 # z update on local shard input (w + u)
                 z_in  = (w.detach() + dual.detach())

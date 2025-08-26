@@ -84,9 +84,13 @@ def _proj_impl_dense(
     """
     device = weight.device
     new_z = weight.detach().clone()
-    z_metric = weight.abs()
+
     if a is not None:
-        z_metric = z_metric * a  # Broadcast-compatible
+        # Generalized projection: metric is V * x^2 where x = weight and a = V
+        z_metric = a * (weight**2)
+    else:
+        # Standard projection: metric is |x|
+        z_metric = weight.abs()
 
     if prune_n != 0 and prune_m != 0:
         # n:m semi-structured pruning (column-block based)
