@@ -763,6 +763,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         #safe
         is_safe=FLAGS.is_safe,  # Use this flag to determine if SAFE pruning is used
         rho=FLAGS.rho,  # Rho parameter for SAFE pruning
+        decouple_admm=FLAGS.admm_decouple,
         ## gradient normalization
         normalize_grad=FLAGS.normalize_grad,
     )

@@ -40,6 +40,7 @@ class ADMM(torch.optim.Adam):
         comparison_group: str = "layer",
         projection_mode: str = "identity",   # 'identity' | 'gradient' | 'activation'
         importance_ema: float = 0.0,
+        decouple: bool = False,
         accelerator=None,                    # optional: to get world_size and device
         **adamw_kwargs
     ):
@@ -62,6 +63,7 @@ class ADMM(torch.optim.Adam):
         self.comparison_group = comparison_group.lower()
         self.projection_mode  = projection_mode.lower()
         self.importance_ema   = float(importance_ema)
+        self.decouple       = bool(decouple)
 
         if self.comparison_group not in ("layer", "column", "row"):
             raise ValueError(f"comparison_group must be 'layer'|'column'|'row', got {self.comparison_group}")
@@ -130,11 +132,15 @@ class ADMM(torch.optim.Adam):
         st["last_grad_for_importance"] = None
 
     @torch.no_grad()
-    def _add_proximal(self):
+    def _proximal_update(self):
         """
-        Add proximal term to gradients AFTER global gradient clipping and
-        BEFORE the actual optimizer step. This ensures proximal is not clipped.
-        We also scale proximal to match distributed gradient averaging.
+        If not decouple:
+            Add proximal term to gradients AFTER global gradient clipping and
+            BEFORE the actual optimizer step. This ensures proximal is not clipped.
+            We also scale proximal to match distributed gradient averaging.
+        If decouple:
+            Directly update weights with proximal term using the main learning rate.
+            This happens AFTER the main optimizer step.
         """
         # Determine world size for average scaling (DDP/FSDP usually average grads across ranks)
         if self.accelerator is not None and getattr(self.accelerator, "num_processes", None):
@@ -164,23 +170,28 @@ class ADMM(torch.optim.Adam):
                 # Proximal term: λ (w - z + u)
                 prox = lmda * (w_l.detach() - s_l.detach() + d_l.detach())
 
-                # Match AMP grad dtype and distributed averaging scale
-                prox = prox.to(w.grad.dtype)
-                if avg_div > 1:
-                    prox = prox / avg_div
-
-                # Add to gradient (handle grad DTensor if any)
-                if hasattr(w.grad, "to_local"):
-                    gl = w.grad.to_local()
-                    gl.add_(prox)
+                if self.decouple:
+                    # Decoupled: direct weight update, happens AFTER optimizer step
+                    w.data.add_(prox, alpha=-g['lr'])
                 else:
-                    w.grad.add_(prox)
+                    # Coupled: add to gradient, happens BEFORE optimizer step
+                    # Match AMP grad dtype and distributed averaging scale
+                    prox = prox.to(w.grad.dtype)
+                    if avg_div > 1:
+                        prox = prox / avg_div
 
-                # Stash grad for gradient-importance if needed (pre-step, post-clip)
-                if self.projection_mode == "gradient":
-                    st["last_grad_for_importance"] = (_loc(w.grad).detach().clone()
-                                                      if hasattr(w.grad, "to_local")
-                                                      else w.grad.detach().clone())
+                    # Add to gradient (handle grad DTensor if any)
+                    if hasattr(w.grad, "to_local"):
+                        gl = w.grad.to_local()
+                        gl.add_(prox)
+                    else:
+                        w.grad.add_(prox)
+
+                    # Stash grad for gradient-importance if needed (pre-step, post-clip)
+                    if self.projection_mode == "gradient":
+                        st["last_grad_for_importance"] = (_loc(w.grad).detach().clone()
+                                                          if hasattr(w.grad, "to_local")
+                                                          else w.grad.detach().clone())
 
     @torch.no_grad()
     def _dual_update(self):
@@ -328,14 +339,26 @@ class ADMM(torch.optim.Adam):
     @torch.no_grad()
     def step(self, closure=None):
         """
-        Order:
-        1) (Trainer already did backward and global clipping)
-        2) Add proximal (excluded from clipping)
-        3) super().step()   (keeps Accelerate/GradScaler/distributed hooks)
-        4) ADMM z/u updates every 'interval' steps
+        Order depends on decouple:
+        - Coupled (default):
+            1) (Trainer did backward and clipping)
+            2) _proximal_update() adds proximal term to grad
+            3) super().step() uses combined grad
+            4) _dual_update() for z/u
+        - Decoupled:
+            1) (Trainer did backward and clipping)
+            2) super().step() uses original grad
+            3) _proximal_update() applies proximal term directly to weights
+            4) _dual_update() for z/u
         """
-        self._add_proximal()
+        if not self.decouple:
+            self._proximal_update()
+
         out = super().step(closure)
+
+        if self.decouple:
+            self._proximal_update()
+
         self._dual_update()
         self.current_step += 1
         return out

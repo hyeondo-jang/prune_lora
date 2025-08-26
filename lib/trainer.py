@@ -496,6 +496,7 @@ class ADMMTrainer(Trainer):
                     lr=self.args.learning_rate, prune_n=self.args.prune_n, prune_m=self.args.prune_m, comparison_group=self.args.admm_projection_comparison_group,
                     projection_mode=self.args.admm_projection_mode,
                     importance_ema=self.args.admm_importance_ema,
+                    decouple=self.args.decouple_admm,
                     accelerator=self.accelerator,
                     **base_optimizer_kwargs,
                 )
