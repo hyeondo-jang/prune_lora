@@ -925,7 +925,8 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
             tokenizer=tokenizer,
-            optimizers=(retrain_optimizer, None) # Pass the new optimizer, no scheduler for this short phase
+            optimizers=(retrain_optimizer, None),# Pass the new optimizer, no scheduler for this short phase
+            save_strategy = "no"
         )
 
         # Start retraining
