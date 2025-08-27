@@ -75,9 +75,7 @@ class ADMM(torch.optim.Adam):
         # Runtime helpers
         self.accelerator = accelerator
         self.current_step = 0
-        self.mask_diff = 0.0  # average flip ratio across ADMM groups at last interval update
-
-        # Lazy-initialized per-parameter ADMM state: 'dual', 'split', 'sparsity', 'importance', 'last_grad_for_importance'
+        self.mask_metrics = {'step_hamming': 0.0, 'initial_hamming': 0.0, 'step_iou': 0.0, 'initial_iou': 0.0}
 
     def _lazy_init_admm_state(self, p: torch.nn.Parameter, group: Dict):
         """
@@ -127,6 +125,7 @@ class ADMM(torch.optim.Adam):
         z0 = self.projection([p.detach()], st["sparsity"], self.prune_n, self.prune_m,
                              [init_importance], comparison_group=self.comparison_group)[0]
         st["split"] = z0.detach().clone().to(device=p.device)
+        st["initial_split"] = z0.detach().ne(0).clone().to(device=p.device)
 
         # Gradient snapshot used when projection_mode == 'gradient'
         st["last_grad_for_importance"] = None
@@ -155,7 +154,7 @@ class ADMM(torch.optim.Adam):
             if not g.get("admm", False):
                 continue
             for w in g["params"]:
-                if w.grad is None:
+                if w.grad is None and not self.decouple:
                     continue
                 self._lazy_init_admm_state(w, g)
                 st = self.state[w]
@@ -204,22 +203,25 @@ class ADMM(torch.optim.Adam):
         if (self.current_step % self.interval) != 0:
             return
 
-        self.mask_diff = 0.0
+        self.mask_metrics = {'step_hamming': 0.0, 'initial_hamming': 0.0, 'step_iou': 0.0, 'initial_iou': 0.0}
         admm_groups = 0
 
         for g in self.param_groups:
             if not g.get("admm", False):
                 continue
             admm_groups += 1
-            # lmda = float(g.get("lmda", self.lmda_default)) # Removed: lmda is now per-parameter
             weights = list(g["params"])
             if not weights:
                 continue
 
-            # Accumulate flips/numel across params; reduce later
             device = weights[0].device
-            flip_sum = torch.tensor(0.0, device=device, dtype=torch.float32)
-            numel_sum = torch.tensor(0.0, device=device, dtype=torch.float32)
+            flip_sum_step = torch.tensor(0, device=device, dtype=torch.int64)
+            flip_sum_initial = torch.tensor(0, device=device, dtype=torch.int64)
+            intersection_step = torch.tensor(0, device=device, dtype=torch.int64)
+            union_step = torch.tensor(0, device=device, dtype=torch.int64)
+            intersection_initial = torch.tensor(0, device=device, dtype=torch.int64)
+            union_initial = torch.tensor(0, device=device, dtype=torch.int64)
+            numel_sum = torch.tensor(0, device=device, dtype=torch.int64)
 
             for w in weights:
                 self._lazy_init_admm_state(w, g)
@@ -227,22 +229,20 @@ class ADMM(torch.optim.Adam):
 
                 dual  = st["dual"]
                 split = st["split"]
+                initial_split = st["initial_split"]
                 spars = st["sparsity"]
                 current_lmda = st["lmda"]
                 previous_lmda = st["prev_lmda"]
 
-                # Rescale dual variable based on change in lmda
                 if current_lmda != previous_lmda:
                     dual.mul_(previous_lmda / current_lmda)
 
-                # Optional importance update for 'gradient' mode (EMA on reduced axis)
                 importance_i = None
                 if self.projection_mode == "gradient":
                     gsnap = st.get("last_grad_for_importance", None)
                     if gsnap is not None:
                         gi = _loc(gsnap).float()
                         if gi.ndim >= 2:
-                            # Example strategy: column-wise importance
                             imp_now = (gi * gi).sum(dim=0)
                         else:
                             imp_now = gi.abs()
@@ -255,86 +255,92 @@ class ADMM(torch.optim.Adam):
                 elif self.projection_mode == "activation":
                     importance_i = st.get("importance", None)
                 elif self.projection_mode == "momentum":
-                    # Pass the second-moment tensor V directly as the importance matrix.
-                    # The projection function will use it to calculate the metric V*(w+u)^2.
-                    importance_i = st.get("exp_avg_sq") # This is V
+                    importance_i = st.get("exp_avg_sq")
 
-                # z update on local shard input (w + u)
                 z_in  = (w.detach() + dual.detach())
                 z_new = self.projection([z_in], spars, self.prune_n, self.prune_m,
                                         [importance_i], comparison_group=self.comparison_group)[0]
-                z_new = z_new.detach().clone().to(w.device)  # clone to avoid aliasing
+                z_new = z_new.detach().clone().to(w.device)
 
-                # u update: u <- u + α (w - z_new)
                 u_new = dual.detach() + self.alpha * (w.detach() - z_new)
 
-                # Calculate local primal and dual residual norms for adaptive lmda
                 w_l = _loc(w)
                 s_l = _loc(split)
                 d_l = _loc(dual)
                 z_new_l = _loc(z_new)
 
-                # Adaptive lmda update (Boyd's scheme) or fixed schedule
                 new_lmda_for_param = current_lmda
                 if self.lmda_schedule_mode == 'adaptive_boyd':
-                    r_primal_norm = torch.norm(w_l.detach() - z_new_l.detach()) # ||w - z_new||
-                    r_dual_norm = current_lmda * torch.norm(z_new_l.detach() - s_l.detach()) # ||z_new - z_old||
+                    r_primal_norm = torch.norm(w_l.detach() - z_new_l.detach())
+                    r_dual_norm = current_lmda * torch.norm(z_new_l.detach() - s_l.detach())
                     if r_primal_norm > self.mu * r_dual_norm:
                         new_lmda_for_param = current_lmda * self.tau_incr
                     elif r_dual_norm > self.mu * r_primal_norm:
                         new_lmda_for_param = current_lmda / self.tau_decr
                 else:
-                    # Apply fixed schedule (constant, linear, cosine, log)
                     t = self.current_step
                     T = self.total_steps
                     s0 = self.lmda_default
-                    s1 = self.final_lmda # Use final_lmda as the target for schedules
+                    s1 = self.final_lmda
 
                     if self.lmda_schedule_mode == 'constant':
-                        new_lmda_for_param = s1 # Use final_lmda as the constant value
+                        new_lmda_for_param = s1
                     elif self.lmda_schedule_mode == 'linear':
                         new_lmda_for_param = s0 + (s1 - s0) * (t / T)
                     elif self.lmda_schedule_mode == 'cosine':
                         new_lmda_for_param = s0 + (s1 - s0) * 0.5 * (1 - math.cos(math.pi * t / T))
                     elif self.lmda_schedule_mode == 'log':
-                        # Avoid log(0); add epsilon
                         eps = 1e-6
                         log_t = math.log(t + eps)
                         log_T = math.log(T + eps)
                         new_lmda_for_param = s0 + (s1 - s0) * (log_t / log_T)
-                    # No else needed, as validation in __init__ ensures valid mode
-                
-                # Clamp the new lmda value
-                # new_lmda_for_param = max(new_lmda_for_param, 1e-4)
 
-                # Mask flip ratio between old z and new z (local shard)
                 old_local = _loc(split)
                 new_local = _loc(z_new)
-                old_zero = (old_local == 0)
-                new_zero = (new_local == 0)
-                flip_local = (old_zero ^ new_zero).sum().to(device=device, dtype=torch.float32)
-                numel_local = torch.tensor(old_local.numel(), device=device, dtype=torch.float32)
+                initial_local = _loc(initial_split)
 
-                flip_sum  += flip_local
+                old_mask = (old_local != 0)
+                new_mask = (new_local != 0)
+                initial_mask = initial_local
+
+                flip_local_step = (old_mask ^ new_mask).sum().to(device=device)
+                flip_local_initial = (initial_mask ^ new_mask).sum().to(device=device)
+                numel_local = torch.tensor(old_local.numel(), device=device)
+
+                intersection_step += (old_mask & new_mask).sum().to(device=device)
+                union_step += (old_mask | new_mask).sum().to(device=device)
+                intersection_initial += (initial_mask & new_mask).sum().to(device=device)
+                union_initial += (initial_mask | new_mask).sum().to(device=device)
+
+                flip_sum_step += flip_local_step
+                flip_sum_initial += flip_local_initial
                 numel_sum += numel_local
 
-                # In-place state updates (keep tensors allocated on the correct device)
                 dual.copy_(u_new)
                 split.copy_(z_new)
-                st["lmda"] = new_lmda_for_param # Update per-parameter lmda
-                st["prev_lmda"] = current_lmda # Store current lmda for next iteration
+                st["lmda"] = new_lmda_for_param
+                st["prev_lmda"] = current_lmda
 
-            # Global reduce of flip/numel (NCCL expects CUDA tensors)
             if dist.is_initialized():
-                dist.all_reduce(flip_sum,  op=dist.ReduceOp.SUM)
+                dist.all_reduce(flip_sum_step,  op=dist.ReduceOp.SUM)
+                dist.all_reduce(flip_sum_initial, op=dist.ReduceOp.SUM)
+                dist.all_reduce(intersection_step, op=dist.ReduceOp.SUM)
+                dist.all_reduce(union_step, op=dist.ReduceOp.SUM)
+                dist.all_reduce(intersection_initial, op=dist.ReduceOp.SUM)
+                dist.all_reduce(union_initial, op=dist.ReduceOp.SUM)
                 dist.all_reduce(numel_sum, op=dist.ReduceOp.SUM)
 
-            # Accumulate average flip ratio across ADMM groups
-            denom = (numel_sum + 1e-12)
-            self.mask_diff += float(flip_sum / denom)
+            eps = 1e-12
+            self.mask_metrics['step_hamming'] += float(flip_sum_step.float() / (numel_sum.float() + eps))
+            self.mask_metrics['initial_hamming'] += float(flip_sum_initial.float() / (numel_sum.float() + eps))
+            self.mask_metrics['step_iou'] += float(intersection_step.float() / (union_step.float() + eps))
+            self.mask_metrics['initial_iou'] += float(intersection_initial.float() / (union_initial.float() + eps))
 
         if admm_groups > 0:
-            self.mask_diff /= admm_groups
+            self.mask_metrics['step_hamming'] /= admm_groups
+            self.mask_metrics['initial_hamming'] /= admm_groups
+            self.mask_metrics['step_iou'] /= admm_groups
+            self.mask_metrics['initial_iou'] /= admm_groups
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -373,9 +379,7 @@ class ADMM(torch.optim.Adam):
             if not g.get("admm", False):
                 continue
             for w in g["params"]:
-                # Ensure state is initialized, although it should be by this point.
                 if w not in self.state or len(self.state[w]) == 0:
-                    # This case is unlikely if the param was ever updated, but as a safeguard:
                     self._lazy_init_admm_state(w, g)
 
                 st = self.state[w]
@@ -384,11 +388,11 @@ class ADMM(torch.optim.Adam):
                                        [importance], comparison_group=self.comparison_group)[0]
                 w.data.copy_(wnew)
 
-    def get_mask_diff(self) -> float:
+    def get_mask_metrics(self) -> Dict[str, float]:
         """
-        Return the averaged mask flip ratio computed at the last interval update.
+        Return the averaged mask metrics computed at the last interval update.
         """
-        return float(self.mask_diff)
+        return self.mask_metrics
 
     def get_lmda_stats(self) -> Dict[str, float]:
         """
