@@ -913,6 +913,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
             report_to="wandb" if has_wandb and FLAGS.wandb else "none",
             fp16=(FLAGS.admm_precision == 'fp16'),
             bf16=(FLAGS.admm_precision == 'bf16' and torch.cuda.is_bf16_supported()),
+            save_strategy="no",
         )
 
         # Create a standard MaskedAdam optimizer for retraining
