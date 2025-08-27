@@ -7,7 +7,7 @@ from transformers.optimization import get_linear_schedule_with_warmup, AdamW
 from torch.amp import autocast
 from .pruner import WrappedGPT, ALPS_prune, SparseGPT
 from .data import get_loaders,get_dataset, TensorData,TensorDataLoader,TensorData, TensorDataLoader
-from .optimizers import SAFE
+from .optimizers import SAFE, MaskedAdam
 from .utils import *
 from .trainer import ADMMTrainer, Trainer
 # --- FIX: Import necessary dataset functions ---
@@ -909,8 +909,8 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
             bf16=(FLAGS.admm_precision == 'bf16' and torch.cuda.is_bf16_supported()),
         )
 
-        # Create a standard AdamW optimizer for retraining
-        retrain_optimizer = AdamW(pruned_model.parameters(), lr=FLAGS.admm_retrain_lr, weight_decay=0.0)
+        # Create a standard MaskedAdam optimizer for retraining
+        retrain_optimizer = MaskedAdam(pruned_model.parameters(), lr=FLAGS.admm_retrain_lr, weight_decay=0.0)
 
         # Create a new standard Trainer
         retrain_trainer = Trainer(

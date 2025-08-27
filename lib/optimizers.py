@@ -409,6 +409,38 @@ class ADMM(torch.optim.Adam):
             return {"avg_lmda": total_lmda / count, "min_lmda": min_lmda, "max_lmda": max_lmda}
 
 
+class MaskedAdam(torch.optim.Adam):
+    """
+    A variant of Adam that applies a fixed mask to the parameters after each
+    optimizer step. This is useful for retraining pruned models, ensuring that
+    the pruned weights remain zero.
+    """
+    def __init__(self, params, *args, **kwargs):
+        super().__init__(params, *args, **kwargs)
+        self.masks = []
+        with torch.no_grad():
+            for group in self.param_groups:
+                for p in group['params']:
+                    if p.dim() > 1: # Typically, we only prune weights, not biases
+                        self.masks.append((p.data != 0).clone())
+                    else:
+                        self.masks.append(None)
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        """
+        Performs a single optimization step and then re-applies the sparsity mask.
+        """
+        super().step(closure)
+        
+        i = 0
+        for group in self.param_groups:
+            for p in group['params']:
+                if self.masks[i] is not None:
+                    p.data.mul_(self.masks[i])
+                i += 1
+
+
 ## LEGACY ADMM
 # class ADMM(torch.optim.Optimizer):
 #     def __init__(
