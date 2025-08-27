@@ -1001,11 +1001,8 @@ class ADMMTrainer(Trainer):
         metric_key_prefix: str = "eval",
         eps: float = 1e-12,
     ) -> Dict[str, float]:
-        """
-        Computes primal and relative residuals in a distributed-friendly way.
-        Iterates through per-parameter optimizer states to get current w and z.
-        """
-        unwrapped_optimizer = self.optimizer.optimizer if hasattr(self.optimizer, 'optimizer') else self.optimizer
+        with torch.no_grad():
+            unwrapped_optimizer = self.optimizer.optimizer if hasattr(self.optimizer, 'optimizer') else self.optimizer
         
         local_primal_residual_sq = torch.tensor(0.0, device=self.args.device)
         local_weight_norm_sq = torch.tensor(0.0, device=self.args.device)
@@ -1046,11 +1043,8 @@ class ADMMTrainer(Trainer):
         self,
         metric_key_prefix: str = "eval",
     ) -> Dict[str, float]:
-        """
-        Computes the dual residual in a distributed-friendly way using all_reduce.
-        Iterates through per-parameter optimizer states to get current w, u, z, and lmda.
-        """
-        unwrapped_optimizer = self.optimizer.optimizer if hasattr(self.optimizer, 'optimizer') else self.optimizer
+        with torch.no_grad():
+            unwrapped_optimizer = self.optimizer.optimizer if hasattr(self.optimizer, 'optimizer') else self.optimizer
         
         local_dual_residual_sq = torch.tensor(0.0, device=self.args.device)
         local_scaled_dual_residual_sq = torch.tensor(0.0, device=self.args.device) # New tensor for scaled sum
