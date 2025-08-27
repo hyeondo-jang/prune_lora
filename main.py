@@ -216,6 +216,11 @@ if __name__ == '__main__':
     flags.DEFINE_integer('admm_adaptive_sparsity_samples', 32, 'Whether to use adaptive sparsity based on sensitivity scores in ADMM.')
     flags.DEFINE_bool('admm_adaptive_sparsity_smooth', False, 'Whether to smooth the adaptive sparsity scores in ADMM.')
     flags.DEFINE_float('admm_adaptive_sparsity_smooth_temperature', 2, 'Alpha for smoothing the adaptive sparsity scores in ADMM.')
+
+    # ADMM Retraining
+    flags.DEFINE_bool('admm_do_retrain', False, 'Whether to perform a short retraining phase after ADMM pruning.')
+    flags.DEFINE_float('admm_retrain_step_ratio', 0.1, 'Ratio of original ADMM steps to use for final retraining.')
+    flags.DEFINE_float('admm_retrain_lr', 1e-4, 'Learning rate for the final retraining phase.')
     
     # Logging & Evaluation
     flags.DEFINE_integer('admm_logging_steps', 1, 'Logging step interval for ADMM training.')

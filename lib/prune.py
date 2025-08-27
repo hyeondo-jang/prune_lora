@@ -3,13 +3,13 @@ import torch
 import math 
 import torch.nn as nn
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from transformers.optimization import get_linear_schedule_with_warmup
+from transformers.optimization import get_linear_schedule_with_warmup, AdamW
 from torch.amp import autocast
 from .pruner import WrappedGPT, ALPS_prune, SparseGPT
 from .data import get_loaders,get_dataset, TensorData,TensorDataLoader,TensorData, TensorDataLoader
 from .optimizers import SAFE
 from .utils import *
-from .trainer import ADMMTrainer
+from .trainer import ADMMTrainer, Trainer
 # --- FIX: Import necessary dataset functions ---
 from datasets import Dataset, concatenate_datasets
 # --- END FIX ---
@@ -22,7 +22,7 @@ import math
 from dataclasses import dataclass, field # Import dataclass and field
 import torch.nn.functional as F
 # --- Necessary Imports ---
-from transformers import TrainingArguments
+from transformers import TrainingArguments, Trainer
 try:
     from transformers.models.opt.modeling_opt import OPTDecoderLayer
 except ImportError:
@@ -867,3 +867,63 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         logging.info("Starting ADMM training on all processes...")
     
     trainer.train()
+
+    # 6. Final Retraining Phase
+    if FLAGS.admm_do_retrain:
+        if admm_training_args.local_rank == 0:
+            logging.info("--- Starting Final Retraining Phase ---")
+
+        # Keep a reference to the pruned model and datasets
+        pruned_model = trainer.model
+        train_dataset = trainer.train_dataset
+        eval_dataset = trainer.eval_dataset
+        
+        # Clean up the old trainer and its optimizer to free memory
+        del trainer
+        torch.cuda.empty_cache()
+
+        # Calculate retraining steps
+        if admm_training_args.max_steps > 0:
+            retrain_steps = int(admm_training_args.max_steps * FLAGS.admm_retrain_step_ratio)
+            if admm_training_args.local_rank == 0:
+                logging.info(f"Original max_steps: {admm_training_args.max_steps}, Retraining for {retrain_steps} steps ({FLAGS.admm_retrain_step_ratio*100}%)." )
+        else:
+            # If original training was by epoch, we can't use a step ratio. Fallback to epochs.
+            retrain_steps = -1 # This tells the new trainer to use epochs
+            if admm_training_args.local_rank == 0:
+                logging.warning("Original training was by epoch. Retraining with admm_retrain_epochs.")
+
+        # Create new training arguments for retraining
+        retrain_args = TrainingArguments(
+            output_dir=os.path.join(admm_output_dir_str, "retrain"),
+            max_steps=retrain_steps,
+            num_train_epochs=FLAGS.admm_retrain_epochs if retrain_steps == -1 else 1000, # Set a high epoch count if using max_steps
+            learning_rate=FLAGS.admm_retrain_lr,
+            per_device_train_batch_size=FLAGS.admm_batch_size,
+            gradient_accumulation_steps=FLAGS.admm_gradient_accumulation_steps,
+            logging_steps=max(1, int(retrain_steps * 0.1)) if retrain_steps > 0 else FLAGS.admm_logging_steps,
+            do_train=True,
+            do_eval=False, # No evaluation during this short retraining
+            report_to="wandb" if has_wandb and FLAGS.wandb else "none",
+            fp16=(FLAGS.admm_precision == 'fp16'),
+            bf16=(FLAGS.admm_precision == 'bf16' and torch.cuda.is_bf16_supported()),
+        )
+
+        # Create a standard AdamW optimizer for retraining
+        retrain_optimizer = AdamW(pruned_model.parameters(), lr=FLAGS.admm_retrain_lr, weight_decay=0.0)
+
+        # Create a new standard Trainer
+        retrain_trainer = Trainer(
+            model=pruned_model, # Use the already pruned and FSDP-wrapped model
+            args=retrain_args,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            tokenizer=tokenizer,
+            optimizers=(retrain_optimizer, None) # Pass the new optimizer, no scheduler for this short phase
+        )
+
+        # Start retraining
+        retrain_trainer.train()
+
+        if admm_training_args.local_rank == 0:
+            logging.info("--- Final Retraining Finished ---")
