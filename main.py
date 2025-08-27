@@ -210,6 +210,7 @@ if __name__ == '__main__':
     flags.DEFINE_bool('admm_blockwise_projection', False, 'Use blockwise projection in ADMM.')
     flags.DEFINE_bool('admm_activation_aware', False, 'Use activation-aware projection in ADMM.')
     flags.DEFINE_bool('admm_decouple', False, 'Decouple proximal update in ADMM (for Adam).')
+    flags.DEFINE_bool('admm_sparse_z', False, 'Use sparse representation for ADMM split variable.')
     flags.DEFINE_enum('loss_type', 'ntp', ['rem', 'ntp'], "Loss type for ADMM training ('rem' for reconstruction, 'ntp' for next token prediction).")
     flags.DEFINE_bool('normalize_grad', False, 'Whether to normalize gradients during ADMM training. Note that gradient normalization is only performed with respect to the gradients of the training objective.')
     flags.DEFINE_bool('admm_adaptive_sparsity', False, 'Whether to use adaptive sparsity based on sensitivity scores in ADMM.')

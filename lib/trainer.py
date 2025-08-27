@@ -497,6 +497,7 @@ class ADMMTrainer(Trainer):
                     projection_mode=self.args.admm_projection_mode,
                     importance_ema=self.args.admm_importance_ema,
                     decouple=self.args.decouple_admm,
+                    sparse_z=self.args.admm_sparse_z,
                     accelerator=self.accelerator,
                     **base_optimizer_kwargs,
                 )

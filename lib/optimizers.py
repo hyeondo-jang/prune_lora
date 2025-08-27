@@ -41,6 +41,7 @@ class ADMM(torch.optim.Adam):
         projection_mode: str = "identity",   # 'identity' | 'gradient' | 'activation'
         importance_ema: float = 0.0,
         decouple: bool = False,
+        sparse_z: bool = False,
         accelerator=None,                    # optional: to get world_size and device
         **adamw_kwargs
     ):
@@ -64,6 +65,7 @@ class ADMM(torch.optim.Adam):
         self.projection_mode  = projection_mode.lower()
         self.importance_ema   = float(importance_ema)
         self.decouple       = bool(decouple)
+        self.sparse_z       = bool(sparse_z)
 
         if self.comparison_group not in ("layer", "column", "row"):
             raise ValueError(f"comparison_group must be 'layer'|'column'|'row', got {self.comparison_group}")
@@ -112,7 +114,10 @@ class ADMM(torch.optim.Adam):
         # Initial split z and initial_split (as bool)
         z0 = self.projection([p.detach()], st["sparsity"], self.prune_n, self.prune_m,
                              [init_importance], comparison_group=self.comparison_group)[0]
-        st["split"] = z0.detach().clone().to(device=p.device)
+        if self.sparse_z:
+            st["split"] = z0.detach().ne(0).to(device=p.device)
+        else:
+            st["split"] = z0.detach().clone().to(device=p.device)
         st["initial_split"] = z0.detach().ne(0).clone().to(device=p.device)
 
         # Gradient snapshot
@@ -146,8 +151,13 @@ class ADMM(torch.optim.Adam):
                     continue
                 self._lazy_init_admm_state(w, g)
                 st = self.state[w]
-                dual, split = st["dual"], st["split"]
+                dual, split_repr = st["dual"], st["split"]
                 lmda = st["lmda"] # Use per-parameter lmda
+
+                split = split_repr
+                if self.sparse_z:
+                    reconstruction_base = w.detach() + dual.detach()
+                    split = split_repr.to(reconstruction_base.dtype) * reconstruction_base
 
                 # Work on local shard if DTensor
                 w_l = _loc(w)
@@ -216,11 +226,24 @@ class ADMM(torch.optim.Adam):
                 st = self.state[w]
 
                 dual  = st["dual"]
-                split = st["split"]
+                split_repr = st["split"]
                 initial_split = st["initial_split"]
                 spars = st["sparsity"]
                 current_lmda = st["lmda"]
                 previous_lmda = st["prev_lmda"]
+
+                # Determine old mask from representation
+                if self.sparse_z:
+                    old_mask_local = _loc(split_repr)
+                else:
+                    old_mask_local = (_loc(split_repr) != 0)
+
+                # Reconstruct old split tensor if needed for calculations
+                split = split_repr
+                if self.sparse_z:
+                    # Reconstruct z_k using w_{k+1} and u_k. This is an approximation.
+                    reconstruction_base = w.detach() + dual.detach()
+                    split = split_repr.to(reconstruction_base.dtype) * reconstruction_base
 
                 if current_lmda != previous_lmda:
                     dual.mul_(previous_lmda / current_lmda)
@@ -283,17 +306,16 @@ class ADMM(torch.optim.Adam):
                         log_T = math.log(T + eps)
                         new_lmda_for_param = s0 + (s1 - s0) * (log_t / log_T)
 
-                old_local = _loc(split)
                 new_local = _loc(z_new)
                 initial_local = _loc(initial_split)
 
-                old_mask = (old_local != 0)
+                old_mask = old_mask_local
                 new_mask = (new_local != 0)
                 initial_mask = initial_local
 
                 flip_local_step = (old_mask ^ new_mask).sum().to(device=device)
                 flip_local_initial = (initial_mask ^ new_mask).sum().to(device=device)
-                numel_local = torch.tensor(old_local.numel(), device=device)
+                numel_local = torch.tensor(old_mask_local.numel(), device=device)
 
                 intersection_step += (old_mask & new_mask).sum().to(device=device)
                 union_step += (old_mask | new_mask).sum().to(device=device)
@@ -305,7 +327,10 @@ class ADMM(torch.optim.Adam):
                 numel_sum += numel_local
 
                 dual.copy_(u_new)
-                split.copy_(z_new)
+                if self.sparse_z:
+                    st["split"].copy_(z_new.ne(0))
+                else:
+                    st["split"].copy_(z_new)
                 st["lmda"] = new_lmda_for_param
                 st["prev_lmda"] = current_lmda
 

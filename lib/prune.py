@@ -691,6 +691,7 @@ class AdmmTrainingArguments(TrainingArguments):
     decouple_admm: bool = field(default=False, metadata={"help": "Decouple proximal update in ADMM (for Adam)."})
     is_safe: bool = field(default=False, metadata={"help": "Use SAFE pruning method."})
     rho: float = field(default=0.01, metadata={"help": "Rho parameter for SAFE pruning."})
+    admm_sparse_z: bool = field(default=False, metadata={"help": "Use sparse representation for ADMM split variable."})
     ## LOSS
     loss_type: str = field(default="ntp", metadata={"help": "Loss type for ADMM training (should be 'rem' or 'ntp)."})
     ## gradient normalization
@@ -754,12 +755,15 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         admm_sparsity_schedule_mode=FLAGS.admm_sparsity_schedule_mode,
         admm_interval=FLAGS.admm_interval,
         base_optimizer_type=FLAGS.admm_base_optimizer,
+        ## admm projection
         admm_projection_comparison_group=FLAGS.admm_projection_comparison_group,
         admm_projection_mode=FLAGS.admm_projection_mode,
         admm_importance_ema=FLAGS.admm_importance_ema,
         prune_n=prune_n,
         prune_m=prune_m,
         loss_type=FLAGS.loss_type,
+        ##memory-efficient admm
+        admm_sparse_z=FLAGS.admm_sparse_z,
         #safe
         is_safe=FLAGS.is_safe,  # Use this flag to determine if SAFE pruning is used
         rho=FLAGS.rho,  # Rho parameter for SAFE pruning
