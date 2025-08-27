@@ -80,54 +80,42 @@ class ADMM(torch.optim.Adam):
     def _lazy_init_admm_state(self, p: torch.nn.Parameter, group: Dict):
         """
         Lazily initialize all required states for a parameter for both ADMM and the base Adam optimizer.
-        If any state already exists for the parameter, this function does nothing.
-        This ensures that when super().step() is called, the state is correctly populated,
-        avoiding conflicts with Adam's internal state initialization logic.
+        If ADMM state (`dual`) already exists, this function does nothing.
+        This prevents conflicts with the base optimizer's own state initialization.
         """
         st = self.state[p]
-        if len(st) > 0:
+        if 'dual' in st:
             return
 
-        # === Initialize all states at once if state dict is empty ===
+        # --- Initialize Adam's state (if not already present) ---
+        if 'exp_avg' not in st:
+            st["step"] = torch.tensor(0.0)
+            st["exp_avg"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+            st["exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+            if group.get("amsgrad", False):
+                st["max_exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
 
-        # 1. Initialize Adam's state
-        # This part mimics the state initialization inside torch.optim.Adam._init_group
-        st["step"] = torch.tensor(0.0) # Or appropriate initialization based on capturable/fused flags
-        st["exp_avg"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-        st["exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-        if group.get("amsgrad", False):
-            st["max_exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-
-        # 2. Initialize ADMM's state
-        # Dual variable u (same shape as p)
+        # --- Initialize ADMM's state ---
         st["dual"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-        # Per-parameter sparsity (allow future customization)
         st["sparsity"] = self.sparsity
-        # Per-parameter lmda for adaptive penalty
         st["lmda"] = group.get("lmda", self.lmda_default)
         st["prev_lmda"] = st["lmda"]
 
-        # Optional importance buffer (shape strategy depends on projection mode)
+        # Optional importance buffer
         init_importance = None
         if self.projection_mode in ("gradient", "activation"):
-            # For a Linear layer weight of shape (out, in), the importance is often
-            # calculated per-column, resulting in a vector of 'in' elements.
-            # We initialize it as a 1-D tensor based on the last dimension of the weight.
             st["importance"] = torch.zeros(_loc(p).shape[-1], device=p.device)
             init_importance = st["importance"]
         elif self.projection_mode == "momentum":
-            # At initialization, exp_avg_sq is all zeros, so it can't be used for the metric.
-            # We pass `None` for the importance, so the projection function falls back
-            # to standard magnitude-based pruning for the initial z value.
             init_importance = None
 
-        # Initial split z := Proj(p) (must clone to avoid aliasing)
+        # Initial split z and initial_split (as bool)
         z0 = self.projection([p.detach()], st["sparsity"], self.prune_n, self.prune_m,
                              [init_importance], comparison_group=self.comparison_group)[0]
         st["split"] = z0.detach().clone().to(device=p.device)
         st["initial_split"] = z0.detach().ne(0).clone().to(device=p.device)
 
-        # Gradient snapshot used when projection_mode == 'gradient'
+        # Gradient snapshot
         st["last_grad_for_importance"] = None
 
     @torch.no_grad()
