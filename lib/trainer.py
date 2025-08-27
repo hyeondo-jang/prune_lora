@@ -1016,7 +1016,14 @@ class ADMMTrainer(Trainer):
                 if param in unwrapped_optimizer.state:
                     state = unwrapped_optimizer.state[param]
                     w = self._loc(param)
-                    z = self._loc(state['split'])
+                    split_repr = state['split']
+
+                    z = self._loc(split_repr)
+                    if unwrapped_optimizer.sparse_z:
+                        u = self._loc(state['dual'])
+                        reconstruction_base = w + u
+                        z = z.to(reconstruction_base.dtype) * reconstruction_base
+
                     local_primal_residual_sq += torch.sum((w - z) ** 2)
                     local_weight_norm_sq += torch.sum(w ** 2)
         
@@ -1055,9 +1062,14 @@ class ADMMTrainer(Trainer):
                     state = unwrapped_optimizer.state[param]
                     w = self._loc(param)
                     u = self._loc(state['dual'])
-                    z = self._loc(state['split'])
+                    split_repr = state['split']
                     p_sparsity = state.get('sparsity', unwrapped_optimizer.sparsity)
                     current_param_lmda = state['lmda'] # Get the per-parameter lmda
+
+                    z = self._loc(split_repr)
+                    if unwrapped_optimizer.sparse_z:
+                        reconstruction_base = w + u
+                        z = z.to(reconstruction_base.dtype) * reconstruction_base
                     
                     z_new = projection([w + u], sparsity=p_sparsity, prune_n=unwrapped_optimizer.prune_n, prune_m=unwrapped_optimizer.prune_m, comparison_group=unwrapped_optimizer.comparison_group)[0]
                     
