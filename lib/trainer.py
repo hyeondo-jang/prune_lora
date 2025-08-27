@@ -498,6 +498,7 @@ class ADMMTrainer(Trainer):
                     importance_ema=self.args.admm_importance_ema,
                     decouple=self.args.decouple_admm,
                     sparse_z=self.args.admm_sparse_z,
+                    dual_dtype=self.args.admm_dual_dtype,
                     accelerator=self.accelerator,
                     **base_optimizer_kwargs,
                 )

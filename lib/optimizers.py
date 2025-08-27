@@ -42,6 +42,7 @@ class ADMM(torch.optim.Adam):
         importance_ema: float = 0.0,
         decouple: bool = False,
         sparse_z: bool = False,
+        dual_dtype: str = 'fp32',
         accelerator=None,                    # optional: to get world_size and device
         **adamw_kwargs
     ):
@@ -66,6 +67,13 @@ class ADMM(torch.optim.Adam):
         self.importance_ema   = float(importance_ema)
         self.decouple       = bool(decouple)
         self.sparse_z       = bool(sparse_z)
+
+        if dual_dtype == 'bf16':
+            self.dual_dtype = torch.bfloat16
+        elif dual_dtype == 'fp32':
+            self.dual_dtype = torch.float32
+        else:
+            raise ValueError(f"Unsupported dual_dtype: {dual_dtype}")
 
         if self.comparison_group not in ("layer", "column", "row"):
             raise ValueError(f"comparison_group must be 'layer'|'column'|'row', got {self.comparison_group}")
@@ -98,7 +106,7 @@ class ADMM(torch.optim.Adam):
                 st["max_exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
 
         # --- Initialize ADMM's state ---
-        st["dual"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+        st["dual"] = torch.zeros_like(p, dtype=self.dual_dtype, memory_format=torch.preserve_format)
         st["sparsity"] = self.sparsity
         st["lmda"] = group.get("lmda", self.lmda_default)
         st["prev_lmda"] = st["lmda"]
