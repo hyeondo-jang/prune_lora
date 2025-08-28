@@ -691,8 +691,8 @@ class AdmmTrainingArguments(TrainingArguments):
     decouple_admm: bool = field(default=False, metadata={"help": "Decouple proximal update in ADMM (for Adam)."})
     is_safe: bool = field(default=False, metadata={"help": "Use SAFE pruning method."})
     rho: float = field(default=0.01, metadata={"help": "Rho parameter for SAFE pruning."})
-    admm_sparse_z: bool = field(default=False, metadata={"help": "Use sparse representation for ADMM split variable."})
     admm_dual_dtype: str = field(default='fp32', metadata={"help": "Dtype for ADMM dual variable (fp32 or bf16)."})
+    admm_split_dtype: str = field(default='fp32', metadata={"help": "Dtype for ADMM split variable (fp32 or bf16)."})
     ## LOSS
     loss_type: str = field(default="ntp", metadata={"help": "Loss type for ADMM training (should be 'rem' or 'ntp)."})
     ## gradient normalization
@@ -763,13 +763,12 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         prune_n=prune_n,
         prune_m=prune_m,
         loss_type=FLAGS.loss_type,
-        ##memory-efficient admm
-        admm_sparse_z=FLAGS.admm_sparse_z,
-        admm_dual_dtype=FLAGS.admm_dual_dtype,
         #safe
         is_safe=FLAGS.is_safe,  # Use this flag to determine if SAFE pruning is used
         rho=FLAGS.rho,  # Rho parameter for SAFE pruning
         decouple_admm=FLAGS.admm_decouple,
+        admm_dual_dtype=FLAGS.admm_dual_dtype,
+        admm_split_dtype=FLAGS.admm_split_dtype,
         ## gradient normalization
         normalize_grad=FLAGS.normalize_grad,
     )

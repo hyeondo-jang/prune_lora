@@ -497,7 +497,8 @@ class ADMMTrainer(Trainer):
                     projection_mode=self.args.admm_projection_mode,
                     importance_ema=self.args.admm_importance_ema,
                     decouple=self.args.decouple_admm,
-                    sparse_z=self.args.admm_sparse_z,
+                    dual_dtype=self.args.admm_dual_dtype,
+                    split_dtype=self.args.admm_split_dtype,
                     dual_dtype=self.args.admm_dual_dtype,
                     accelerator=self.accelerator,
                     **base_optimizer_kwargs,
@@ -1001,38 +1002,35 @@ class ADMMTrainer(Trainer):
         metric_key_prefix: str = "eval",
         eps: float = 1e-12,
     ) -> Dict[str, float]:
+        """
+        Computes primal and relative residuals in a distributed-friendly way.
+        Iterates through per-parameter optimizer states to get current w and z.
+        """
         with torch.no_grad():
             unwrapped_optimizer = self.optimizer.optimizer if hasattr(self.optimizer, 'optimizer') else self.optimizer
-        
-        local_primal_residual_sq = torch.tensor(0.0, device=self.args.device)
-        local_weight_norm_sq = torch.tensor(0.0, device=self.args.device)
-        
-        # Iterate over the local shard of optimizer states
-        for group in unwrapped_optimizer.param_groups:
-            if not group.get('admm', False): continue
-            for param in group['params']:
-                if param in unwrapped_optimizer.state:
-                    state = unwrapped_optimizer.state[param]
-                    w = self._loc(param)
-                    split_repr = state['split']
+            
+            local_primal_residual_sq = torch.tensor(0.0, device=self.args.device)
+            local_weight_norm_sq = torch.tensor(0.0, device=self.args.device)
+            
+            # Iterate over the local shard of optimizer states
+            for group in unwrapped_optimizer.param_groups:
+                if not group.get('admm', False): continue
+                for param in group['params']:
+                    if param in unwrapped_optimizer.state:
+                        state = unwrapped_optimizer.state[param]
+                        w = self._loc(param)
+                        z = self._loc(state['split'])
+                        local_primal_residual_sq += torch.sum((w - z) ** 2)
+                        local_weight_norm_sq += torch.sum(w ** 2)
+            
+            # Synchronize across all processes
+            if self.args.world_size > 1 and dist.is_initialized():
+                dist.all_reduce(local_primal_residual_sq, op=dist.ReduceOp.SUM)
+                dist.all_reduce(local_weight_norm_sq, op=dist.ReduceOp.SUM)
 
-                    z = self._loc(split_repr)
-                    if unwrapped_optimizer.sparse_z:
-                        u = self._loc(state['dual'])
-                        reconstruction_base = w + u
-                        z = z.to(reconstruction_base.dtype) * reconstruction_base
-
-                    local_primal_residual_sq += torch.sum((w - z) ** 2)
-                    local_weight_norm_sq += torch.sum(w ** 2)
-        
-        # Synchronize across all processes
-        if self.args.world_size > 1 and dist.is_initialized():
-            dist.all_reduce(local_primal_residual_sq, op=dist.ReduceOp.SUM)
-            dist.all_reduce(local_weight_norm_sq, op=dist.ReduceOp.SUM)
-
-        # Now all processes have the global sum. Convert to float.
-        primal_residual = torch.sqrt(local_primal_residual_sq).item()
-        relative_residual = primal_residual / (torch.sqrt(local_weight_norm_sq).item() + eps)
+            # Now all processes have the global sum. Convert to float.
+            primal_residual = torch.sqrt(local_primal_residual_sq).item()
+            relative_residual = primal_residual / (torch.sqrt(local_weight_norm_sq).item() + eps)
 
         return {
             f"{metric_key_prefix}_primal_residual": primal_residual,
@@ -1043,45 +1041,44 @@ class ADMMTrainer(Trainer):
         self,
         metric_key_prefix: str = "eval",
     ) -> Dict[str, float]:
+        """
+        Computes the dual residual in a distributed-friendly way using all_reduce.
+        Iterates through per-parameter optimizer states to get current w, u, z, and lmda.
+        """
         with torch.no_grad():
             unwrapped_optimizer = self.optimizer.optimizer if hasattr(self.optimizer, 'optimizer') else self.optimizer
-        
-        local_dual_residual_sq = torch.tensor(0.0, device=self.args.device)
-        local_scaled_dual_residual_sq = torch.tensor(0.0, device=self.args.device) # New tensor for scaled sum
+            
+            local_dual_residual_sq = torch.tensor(0.0, device=self.args.device)
+            local_scaled_dual_residual_sq = torch.tensor(0.0, device=self.args.device) # New tensor for scaled sum
 
-        # Iterate over the local shard of optimizer states
-        for group in unwrapped_optimizer.param_groups:
-            if not group.get('admm', False): continue
-            for param in group['params']:
-                if param in unwrapped_optimizer.state:
-                    state = unwrapped_optimizer.state[param]
-                    w = self._loc(param)
-                    u = self._loc(state['dual'])
-                    split_repr = state['split']
-                    p_sparsity = state.get('sparsity', unwrapped_optimizer.sparsity)
-                    current_param_lmda = state['lmda'] # Get the per-parameter lmda
+            # Iterate over the local shard of optimizer states
+            for group in unwrapped_optimizer.param_groups:
+                if not group.get('admm', False): continue
+                for param in group['params']:
+                    if param in unwrapped_optimizer.state:
+                        state = unwrapped_optimizer.state[param]
+                        w = self._loc(param)
+                        u = self._loc(state['dual'])
+                        z = self._loc(state['split'])
+                        p_sparsity = state.get('sparsity', unwrapped_optimizer.sparsity)
+                        current_param_lmda = state['lmda'] # Get the per-parameter lmda
+                        
+                        z_new = projection([w + u], sparsity=p_sparsity, prune_n=unwrapped_optimizer.prune_n, prune_m=unwrapped_optimizer.prune_m, comparison_group=unwrapped_optimizer.comparison_group)[0]
+                        
+                        # Calculate unscaled dual residual for this parameter
+                        param_dual_residual_sq = torch.sum((z_new - z) ** 2)
+                        local_dual_residual_sq += param_dual_residual_sq
 
-                    z = self._loc(split_repr)
-                    if unwrapped_optimizer.sparse_z:
-                        reconstruction_base = w + u
-                        z = z.to(reconstruction_base.dtype) * reconstruction_base
-                    
-                    z_new = projection([w + u], sparsity=p_sparsity, prune_n=unwrapped_optimizer.prune_n, prune_m=unwrapped_optimizer.prune_m, comparison_group=unwrapped_optimizer.comparison_group)[0]
-                    
-                    # Calculate unscaled dual residual for this parameter
-                    param_dual_residual_sq = torch.sum((z_new - z) ** 2)
-                    local_dual_residual_sq += param_dual_residual_sq
+                        # Calculate scaled dual residual for this parameter using its current lmda
+                        local_scaled_dual_residual_sq += (current_param_lmda ** 2) * param_dual_residual_sq
 
-                    # Calculate scaled dual residual for this parameter using its current lmda
-                    local_scaled_dual_residual_sq += (current_param_lmda ** 2) * param_dual_residual_sq
+            # Synchronize across all processes
+            if self.args.world_size > 1 and dist.is_initialized():
+                dist.all_reduce(local_dual_residual_sq, op=dist.ReduceOp.SUM)
+                dist.all_reduce(local_scaled_dual_residual_sq, op=dist.ReduceOp.SUM) # All-reduce the scaled sum
 
-        # Synchronize across all processes
-        if self.args.world_size > 1 and dist.is_initialized():
-            dist.all_reduce(local_dual_residual_sq, op=dist.ReduceOp.SUM)
-            dist.all_reduce(local_scaled_dual_residual_sq, op=dist.ReduceOp.SUM) # All-reduce the scaled sum
-
-        dual_residual = torch.sqrt(local_dual_residual_sq).item()
-        scaled_dual_residual = torch.sqrt(local_scaled_dual_residual_sq).item() # Take sqrt of the summed squares
+            dual_residual = torch.sqrt(local_dual_residual_sq).item()
+            scaled_dual_residual = torch.sqrt(local_scaled_dual_residual_sq).item() # Take sqrt of the summed squares
 
         return {
             f"{metric_key_prefix}_dual_residual": dual_residual,
