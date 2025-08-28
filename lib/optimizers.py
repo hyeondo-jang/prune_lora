@@ -94,8 +94,8 @@ class ADMM(torch.optim.Adam):
             raise ValueError(f"comparison_group must be 'layer'|'column'|'row', got {self.comparison_group}")
         if self.projection_mode not in ("identity", "gradient", "activation", "momentum"):
             raise ValueError(f"projection_mode must be 'identity'|'gradient'|'activation'|'momentum', got {self.projection_mode}")
-        if self.lmda_schedule_mode not in ('constant', 'linear', 'cosine', 'log', 'adaptive_boyd'):
-            raise ValueError(f"lmda_schedule_mode must be 'constant', 'linear', 'cosine', 'log', or 'adaptive_boyd', got {self.lmda_schedule_mode}")
+        if self.lmda_schedule_mode not in ('constant', 'linear', 'cosine', 'exponential', 'adaptive_boyd'):
+            raise ValueError(f"lmda_schedule_mode must be 'constant', 'linear', 'cosine', 'exponential', or 'adaptive_boyd', got {self.lmda_schedule_mode}")
 
         # Runtime helpers
         self.accelerator = accelerator
@@ -307,6 +307,10 @@ class ADMM(torch.optim.Adam):
                         log_t = math.log(t + eps)
                         log_T = math.log(T + eps)
                         new_lmda_for_param = s0 + (s1 - s0) * (log_t / log_T)
+                    elif self.lmda_schedule_mode == 'exponential':
+                        if s0 <= 0 or s1 <= 0:
+                            raise ValueError("For exponential lambda schedule, both init_lmda and final_lmda must be positive.")
+                        new_lmda_for_param = s0 * (s1/s0)**(t/T)
 
                 old_local = _loc(split)
                 new_local = _loc(z_new)
