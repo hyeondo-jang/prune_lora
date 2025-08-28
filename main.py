@@ -168,10 +168,10 @@ if __name__ == '__main__':
     flags.DEFINE_integer('accumulation_steps', 1, 'Accumulation steps for SAFE')
     flags.DEFINE_bool('activation', False, 'Activation based sparsity, SAFE+.')
     flags.DEFINE_float('rho', 2e-4, 'Rho for SAM.')
-    flags.DEFINE_float('beta1', 0.9, 'Beta1 for Adam.')
-    flags.DEFINE_float('beta2', 0.95, 'Beta2 for Adam.')
 
     # Global ADMM hyperparams
+    flags.DEFINE_float('admm_beta1', 0.9, 'Beta1 for ADMM Adam optimizer.')
+    flags.DEFINE_float('admm_beta2', 0.95, 'Beta2 for ADMM Adam optimizer.')
     flags.DEFINE_integer('admm_num_train_samples', 4, 'Number of training samples for ADMM.')
     flags.DEFINE_integer('admm_num_eval_samples', 4, 'Number of evaluation samples for ADMM.')
     flags.DEFINE_bool('admm_save_inputs', False, 'Whether to save processed ADMM training inputs.')

@@ -694,6 +694,8 @@ class AdmmTrainingArguments(TrainingArguments):
     rho: float = field(default=0.01, metadata={"help": "Rho parameter for SAFE pruning."})
     admm_dual_dtype: str = field(default='fp32', metadata={"help": "Dtype for ADMM dual variable (fp32 or bf16)."})
     admm_split_dtype: str = field(default='fp32', metadata={"help": "Dtype for ADMM split variable (fp32 or bf16)."})
+    admm_beta1: float = field(default=0.9, metadata={"help": "Beta1 for ADMM Adam optimizer."})
+    admm_beta2: float = field(default=0.95, metadata={"help": "Beta2 for ADMM Adam optimizer."})
     ## LOSS
     loss_type: str = field(default="ntp", metadata={"help": "Loss type for ADMM training (should be 'rem' or 'ntp)."})
     ## gradient normalization
@@ -771,6 +773,8 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         decouple_admm=FLAGS.admm_decouple,
         admm_dual_dtype=FLAGS.admm_dual_dtype,
         admm_split_dtype=FLAGS.admm_split_dtype,
+        admm_beta1=FLAGS.admm_beta1,
+        admm_beta2=FLAGS.admm_beta2,
         ## gradient normalization
         normalize_grad=FLAGS.normalize_grad,
     )

@@ -464,8 +464,8 @@ class ADMMTrainer(Trainer):
             # Base optimizer for ADMM (not for SAFE, as SAFE uses SAM which has its own base)
             ## TODO: this needs to be fixed ()
             base_optimizer_kwargs = {
-                # 'weight_decay': self.args.weight_decay
-            }
+                    'betas': (self.args.admm_beta1, self.args.admm_beta2),
+                }
     
             # Prepare kwargs for ADMM
 
