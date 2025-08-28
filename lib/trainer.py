@@ -507,7 +507,6 @@ class ADMMTrainer(Trainer):
                     projection_mode=self.args.admm_projection_mode,
                     importance_ema=self.args.admm_importance_ema,
                     decouple=self.args.decouple_admm,
-                    dual_dtype=self.args.admm_dual_dtype,
                     split_dtype=self.args.admm_split_dtype,
                     accelerator=self.accelerator,
                     **base_optimizer_kwargs,
