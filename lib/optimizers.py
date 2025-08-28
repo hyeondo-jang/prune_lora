@@ -28,13 +28,14 @@ class ADMM(torch.optim.Adam):
         sparsity: float,
         interval: int,
         alpha: float = 1.0,
-        lmda: float = 1e-3, # Initial lmda for new parameters
+        lmda: float = 1e-3, # For constant schedule
+        init_lmda: float = 0.0, # For scheduling
+        final_lmda: float = 0.01, # For scheduling
         lmda_schedule_mode: str = 'constant', # New: 'constant', 'linear', 'cosine', 'adaptive_boyd'
         total_steps: int = 1, # New: Total steps for fixed lmda schedules
         mu: float = 1.5, # For adaptive penalty
         tau_incr: float = 2.0, # For adaptive penalty
         tau_decr: float = 2.0, # For adaptive penalty
-        final_lmda: float = 1e-3, # Final lmda for adaptive penalty clamping
         prune_n: int = 0,
         prune_m: int = 0,
         comparison_group: str = "layer",
@@ -53,19 +54,27 @@ class ADMM(torch.optim.Adam):
         self.sparsity        = float(sparsity)
         self.interval        = int(interval)
         self.alpha           = float(alpha)
-        self.lmda_default    = float(lmda) # Initial lmda for new parameters
+        self.init_lmda = float(init_lmda)
+        self.final_lmda = float(final_lmda)
         self.lmda_schedule_mode = lmda_schedule_mode.lower()
+
+        if self.lmda_schedule_mode == 'constant':
+            self.lmda_default = float(lmda)
+        else:
+            self.lmda_default = float(init_lmda) # Use init_lmda as the default starting value
         self.total_steps     = int(total_steps)
         self.mu              = float(mu)
         self.tau_incr        = float(tau_incr)
         self.tau_decr        = float(tau_decr)
-        self.final_lmda      = float(final_lmda)
         self.prune_n         = int(prune_n)
         self.prune_m         = int(prune_m)
         self.comparison_group = comparison_group.lower()
         self.projection_mode  = projection_mode.lower()
         self.importance_ema   = float(importance_ema)
         self.decouple       = bool(decouple)
+
+        if self.lmda_schedule_mode != 'constant' and self.init_lmda is None:
+            raise ValueError("For lambda scheduling, init_lmda must be provided.")
 
         if dual_dtype == 'bf16':
             self.dual_dtype = torch.bfloat16
@@ -284,11 +293,11 @@ class ADMM(torch.optim.Adam):
                 else:
                     t = self.current_step
                     T = self.total_steps
-                    s0 = self.lmda_default
+                    s0 = self.init_lmda
                     s1 = self.final_lmda
 
                     if self.lmda_schedule_mode == 'constant':
-                        new_lmda_for_param = s1
+                        new_lmda_for_param = self.lmda_default
                     elif self.lmda_schedule_mode == 'linear':
                         new_lmda_for_param = s0 + (s1 - s0) * (t / T)
                     elif self.lmda_schedule_mode == 'cosine':

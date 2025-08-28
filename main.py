@@ -197,8 +197,9 @@ if __name__ == '__main__':
     
     # ADMM Specific Config
     flags.DEFINE_float('admm_alpha', 1.0, 'Alpha parameter for ADMM over-relaxation. default is 1.0')
-    flags.DEFINE_float('admm_lmda', 0.01, 'Lambda penalty parameter for ADMM.')
-    flags.DEFINE_float('admm_initial_lmda',0.0, 'Initial lambda value for ADMM (if using schedule).')
+    flags.DEFINE_float('admm_lmda', 0.01, 'Lambda penalty parameter for ADMM (for constant schedule).')
+    flags.DEFINE_float('admm_init_lmda', 0.0, 'Initial lambda value for ADMM scheduling.')
+    flags.DEFINE_float('admm_final_lmda', 0.01, 'Final lambda value for ADMM scheduling.')
     flags.DEFINE_float('admm_mu', 10.0, 'Mu parameter for Adaptive penalty ADMM')
     flags.DEFINE_float('admm_tau_incr', 2.0, 'Tau increase factor for Adaptive penalty ADMM')
     flags.DEFINE_float('admm_tau_decr', 2.0, 'Tau decrease factor for Adaptive penalty ADMM')
