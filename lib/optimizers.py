@@ -174,13 +174,8 @@ class ADMM(torch.optim.Adam):
                 dual, split = st["dual"], st["split"]
                 lmda = st["lmda"] # Use per-parameter lmda
 
-                # Work on local shard if DTensor
-                w_l = _loc(w)
-                s_l = _loc(split)
-                d_l = _loc(dual)
-
                 # Proximal term: λ (w - z + u)
-                prox = lmda * (w_l.detach() - s_l.detach() + d_l.detach())
+                prox = lmda * (w.detach() - split.detach() + dual.detach())
 
                 if self.decouple:
                     # Decoupled: direct weight update, happens AFTER optimizer step
@@ -188,16 +183,17 @@ class ADMM(torch.optim.Adam):
                 else:
                     # Coupled: add to gradient, happens BEFORE optimizer step
                     # Match AMP grad dtype and distributed averaging scale
-                    prox = prox.to(w.grad.dtype)
+                    prox_local = _loc(prox)
+                    prox_local = prox_local.to(w.grad.dtype)
                     if avg_div > 1:
-                        prox = prox / avg_div
+                        prox_local = prox_local / avg_div
 
                     # Add to gradient (handle grad DTensor if any)
                     if hasattr(w.grad, "to_local"):
                         gl = w.grad.to_local()
-                        gl.add_(prox)
+                        gl.add_(prox_local)
                     else:
-                        w.grad.add_(prox)
+                        w.grad.add_(prox_local)
 
                     # Stash grad for gradient-importance if needed (pre-step, post-clip)
                     if self.projection_mode == "gradient":
