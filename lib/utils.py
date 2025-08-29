@@ -182,10 +182,10 @@ def projection(
             new_local = _proj_impl_dense(w_local, a_local, sparsity, prune_n, prune_m, comparison_group)
             new_dt = DTensor.from_local(new_local, device_mesh=mesh, placements=orig_places,shape=global_shape,stride=global_stride)
             out.append(new_dt)
-        else:
+        else: ## replicate (all-reduce)
             rep = weight.redistribute(placements=[Replicate()])
             dense_w = rep.to_local()
-            dense_a = _a_to_local_if_needed(a)
+            dense_a = _as_dense_a(a)
             new_dense = _proj_impl_dense(dense_w, dense_a, sparsity, prune_n, prune_m, comparison_group)
             new_dt = distribute_tensor(new_dense, device_mesh=mesh, placements=orig_places)
             out.append(new_dt)
