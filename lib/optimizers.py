@@ -179,7 +179,8 @@ class ADMM(torch.optim.Adam):
 
                 if self.decouple:
                     # Decoupled: direct weight update, happens AFTER optimizer step
-                    w.data.add_(prox, alpha=-g['lr'])
+                    #w.data.add_(prox, alpha=-g['lr']) ## w_k+1/2 = w_k - \eta \lambda (w-z+u)
+                    w.data.add_(-prox) ## w_k+1/2 = w_k - \lambda (w-z+u)
                 else:
                     # Coupled: add to gradient, happens BEFORE optimizer step
                     # Match AMP grad dtype and distributed averaging scale
