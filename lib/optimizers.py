@@ -266,6 +266,10 @@ class ADMM(torch.optim.Adam):
                     importance_i = st.get("importance", None)
                 elif self.projection_mode == "momentum":
                     importance_i = st.get("exp_avg_sq")
+                    if isinstance(importance_i, DTensor):
+                        # Ensure importance_i is globally consistent for projection
+                        # This will gather the sharded exp_avg_sq to all ranks
+                        importance_i = importance_i.redistribute(placements=[Replicate()]).to_local()
 
                 z_in  = (w.detach() + dual.detach())
                 z_new = self.projection([z_in], spars, self.prune_n, self.prune_m,
