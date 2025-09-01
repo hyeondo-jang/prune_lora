@@ -301,8 +301,8 @@ class ADMM(torch.optim.Adam):
                     
                     m_hat = m_t / (1.0 - beta1**step)
                     v_hat = v_t / (1.0 - beta2**step)
-                    
-                    importance_i = (torch.sqrt(v_hat) * w.detach() - m_hat / torch.sqrt(v_hat))
+                    importance_i = 1.0/2.0 * v_hat * (w.detach()**2) - m_hat*w.detach()
+                    # importance_i = (torch.sqrt(v_hat) * w.detach() - m_hat / torch.sqrt(v_hat))
 
                     if isinstance(importance_i, DTensor):
                         importance_i = importance_i.redistribute(placements=[Replicate()]).to_local()
@@ -457,7 +457,8 @@ class ADMM(torch.optim.Adam):
                     beta1, beta2 = g.get('betas', (0.9, 0.999))
                     m_hat = m_t / (1.0 - beta1**step)
                     v_hat = v_t / (1.0 - beta2**step)
-                    importance = (torch.sqrt(v_hat) * w.detach() - m_hat / torch.sqrt(v_hat))
+                    importance_i = 1.0/2.0 * v_hat * (w.detach()**2) - m_hat*w.detach()
+                    # importance = (torch.sqrt(v_hat) * w.detach() - m_hat / torch.sqrt(v_hat))
                     if isinstance(importance, DTensor):
                         importance = importance.redistribute(placements=[Replicate()]).to_local()
 
