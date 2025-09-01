@@ -178,29 +178,29 @@ class ADMM(torch.optim.Adam):
                 # Proximal term: λ (w - z + u)
                 if self.decouple:# Decoupled: direct weight update, happens AFTER optimizer step
                     ## exact proximal operator
-                    v = st['exp_avg_sq']                                  # v_t
-                    step = int(st.get("step", 0))                         # Adam's current step t
-                    beta2 = g.get('betas', (0.9, 0.999))[1]
-                    eps = g.get('eps', 1e-8)
-                    lr = g.get('lr', 0.0)
+                    # v = st['exp_avg_sq']                                  # v_t
+                    # step = int(st.get("step", 0))                         # Adam's current step t
+                    # beta2 = g.get('betas', (0.9, 0.999))[1]
+                    # eps = g.get('eps', 1e-8)
+                    # lr = g.get('lr', 0.0)
 
-                    # bias correction for second moment: vhat = v_t / (1 - beta2^t)
-                    bc2 = 1.0 - (beta2 ** max(step, 1))                   # guard t=0
-                    vhat = v / max(bc2, 1e-12)
+                    # # bias correction for second moment: vhat = v_t / (1 - beta2^t)
+                    # bc2 = 1.0 - (beta2 ** max(step, 1))                   # guard t=0
+                    # vhat = v / max(bc2, 1e-12)
 
-                    # eta_vec = lr / (sqrt(vhat) + eps) ## effective lr (per element)
-                    # keep dtype/device aligned with w
-                    denom_adam = vhat.sqrt().add_(eps)                    # tmp tensor
-                    eta_vec = (lr / denom_adam).to(dtype=w.dtype)
+                    # # eta_vec = lr / (sqrt(vhat) + eps) ## effective lr (per element)
+                    # # keep dtype/device aligned with w
+                    # denom_adam = vhat.sqrt().add_(eps)                    # tmp tensor
+                    # eta_vec = (lr / denom_adam).to(dtype=w.dtype)
 
-                    # exact prox: w <- (w + (lambda*eta_vec)*(z - u)) / (1 + lambda*eta_vec)
-                    a = (split - dual).to(dtype=w.dtype, device=w.device)
-                    gamma = lmda * eta_vec                                # elementwise
-                    w.add_(gamma * a)
-                    w.mul_(1.0 / (1.0 + gamma))
+                    # # exact prox: w <- (w + (lambda*eta_vec)*(z - u)) / (1 + lambda*eta_vec)
+                    # a = (split - dual).to(dtype=w.dtype, device=w.device)
+                    # gamma = lmda * eta_vec                                # elementwise
+                    # w.add_(gamma * a)
+                    # w.mul_(1.0 / (1.0 + gamma))
                     ##linearization
-                    # prox = lmda * (w.detach() - split.detach() + dual.detach())
-                    #w.data.add_(prox, alpha=-g['lr']) ## w_k+1/2 = w_k - \eta \lambda (w-z+u)
+                    prox = lmda * (w.detach() - split.detach() + dual.detach())
+                    w.data.add_(prox, alpha=-g['lr']) ## w_k+1/2 = w_k - \eta \lambda (w-z+u)
                 else:
                     prox = lmda * (w.detach() - split.detach() + dual.detach())
                     # Coupled: add to gradient, happens BEFORE optimizer step
