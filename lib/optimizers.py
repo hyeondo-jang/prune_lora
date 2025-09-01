@@ -286,7 +286,9 @@ class ADMM(torch.optim.Adam):
                 elif self.projection_mode == "activation":
                     importance_i = st.get("importance", None)
                 elif self.projection_mode == "momentum":
-                    importance_i = st.get("exp_avg_sq")
+                    v_t = st.get("exp_avg_sq")
+                    beta2 = g.get('betas', (0.9, 0.95))[1]
+                    importance_i = v_t / (1.0 - beta2**(st.get("step", 1)))
                     if isinstance(importance_i, DTensor):
                         # Ensure importance_i is globally consistent for projection
                         # This will gather the sharded exp_avg_sq to all ranks
