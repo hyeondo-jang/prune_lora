@@ -93,8 +93,8 @@ class ADMM(torch.optim.Adam):
 
         if self.comparison_group not in ("layer", "column", "row"):
             raise ValueError(f"comparison_group must be 'layer'|'column'|'row', got {self.comparison_group}")
-        if self.projection_mode not in ("identity", "gradient", "activation", "momentum"):
-            raise ValueError(f"projection_mode must be 'identity'|'gradient'|'activation'|'momentum', got {self.projection_mode}")
+        if self.projection_mode not in ("identity", "gradient", "activation", "momentum", "taylor"):
+            raise ValueError(f"projection_mode must be 'identity'|'gradient'|'activation'|'momentum'|'taylor', got {self.projection_mode}")
         if self.lmda_schedule_mode not in ('constant', 'linear', 'cosine', 'exponential', 'adaptive_boyd'):
             raise ValueError(f"lmda_schedule_mode must be 'constant', 'linear', 'cosine', 'exponential', or 'adaptive_boyd', got {self.lmda_schedule_mode}")
 
@@ -293,10 +293,25 @@ class ADMM(torch.optim.Adam):
                         # Ensure importance_i is globally consistent for projection
                         # This will gather the sharded exp_avg_sq to all ranks
                         importance_i = importance_i.redistribute(placements=[Replicate()]).to_local()
+                elif self.projection_mode == "taylor":
+                    m_t = st.get("exp_avg")
+                    v_t = st.get("exp_avg_sq")
+                    step = st.get("step", 1)
+                    beta1, beta2 = g.get('betas', (0.9, 0.999))
+                    
+                    m_hat = m_t / (1.0 - beta1**step)
+                    v_hat = v_t / (1.0 - beta2**step)
+                    
+                    importance_i = (torch.sqrt(v_hat) * w.detach() - m_hat / torch.sqrt(v_hat))
+
+                    if isinstance(importance_i, DTensor):
+                        importance_i = importance_i.redistribute(placements=[Replicate()]).to_local()
+
+                is_direct_score = (self.projection_mode == 'taylor')
 
                 z_in  = (w.detach() + dual.detach())
                 z_new = self.projection([z_in], spars, self.prune_n, self.prune_m,
-                                        [importance_i], comparison_group=self.comparison_group)[0]
+                                        [importance_i], comparison_group=self.comparison_group, is_direct_score=is_direct_score)[0]
                 z_new = z_new.detach().clone().to(w.device)
 
                 u_new = dual.detach() + self.alpha * (w.detach() - z_new)
@@ -424,9 +439,30 @@ class ADMM(torch.optim.Adam):
                     self._lazy_init_admm_state(w, g)
 
                 st = self.state[w]
-                importance = st.get("importance", None) if self.projection_mode != "identity" else None
+                importance = None
+                is_direct_score = (self.projection_mode == 'taylor')
+
+                if self.projection_mode == "gradient" or self.projection_mode == "activation":
+                    importance = st.get("importance", None)
+                elif self.projection_mode == "momentum":
+                    v_t = st.get("exp_avg_sq")
+                    beta2 = g.get('betas', (0.9, 0.95))[1]
+                    importance = v_t / (1.0 - beta2**(st.get("step", 1)))
+                    if isinstance(importance, DTensor):
+                        importance = importance.redistribute(placements=[Replicate()]).to_local()
+                elif self.projection_mode == "taylor":
+                    m_t = st.get("exp_avg")
+                    v_t = st.get("exp_avg_sq")
+                    step = st.get("step", 1)
+                    beta1, beta2 = g.get('betas', (0.9, 0.999))
+                    m_hat = m_t / (1.0 - beta1**step)
+                    v_hat = v_t / (1.0 - beta2**step)
+                    importance = (torch.sqrt(v_hat) * w.detach() - m_hat / torch.sqrt(v_hat))
+                    if isinstance(importance, DTensor):
+                        importance = importance.redistribute(placements=[Replicate()]).to_local()
+
                 wnew = self.projection([w.detach()], st["sparsity"], self.prune_n, self.prune_m,
-                                       [importance], comparison_group=self.comparison_group)[0]
+                                       [importance], comparison_group=self.comparison_group, is_direct_score=is_direct_score)[0]
                 w.data.copy_(wnew)
 
     def get_mask_metrics(self) -> Dict[str, float]:

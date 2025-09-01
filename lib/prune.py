@@ -676,7 +676,7 @@ class AdmmTrainingArguments(TrainingArguments):
     admm_sparsity_schedule_mode: str = field(default='constant', metadata={"help": "Mode for sparsity schedule (linear/cosine/exponential/constant)."})
     admm_interval: int = field(default=32, metadata={"help": "Interval for ADMM projection and dual updates."})
     admm_projection_comparison_group: str = field(default='layer', metadata={"help": "Comparison group for ADMM projection (layer/column/row)."})
-    admm_projection_mode: str = field(default='identity', metadata={"help": "Generalized projection mode for ADMM (identity/activation/gradient/momentum)."})
+    admm_projection_mode: str = field(default='identity', metadata={"help": "Generalized projection mode for ADMM (identity/activation/gradient/momentum/taylor)."})
     admm_importance_ema: float = field(default=0.00, metadata={"help": "EMA for importance in ADMM projection."})
     prune_n: int = field(default=0, metadata={"help": "N for N:M sparsity."})
     prune_m: int = field(default=0, metadata={"help": "M for N:M sparsity."})

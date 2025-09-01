@@ -72,6 +72,7 @@ def _proj_impl_dense(
     prune_n: int,
     prune_m: int,
     comparison_group: str,
+    is_direct_score: bool = False,
 ) -> torch.Tensor:
     """
     Projection core for dense tensors.
@@ -86,8 +87,11 @@ def _proj_impl_dense(
     new_z = weight.detach().clone()
 
     if a is not None:
-        # Generalized projection: metric is V * x^2 where x = weight and a = V
-        z_metric = a * (weight**2)
+        if is_direct_score:
+            z_metric = a
+        else:
+            # Generalized projection: metric is V * x^2 where x = weight and a = V
+            z_metric = a * (weight**2)
     else:
         # Standard projection: metric is |x|
         z_metric = weight.abs()
@@ -146,6 +150,7 @@ def projection(
     prune_m: int = 0,
     importance_matrix: Optional[List[torch.Tensor]] = None,
     comparison_group: str = "layer",
+    is_direct_score: bool = False,
 ) -> List[torch.Tensor]:
     """
     Distributed/DTensor-friendly projection.
@@ -164,7 +169,7 @@ def projection(
 
         # Dense tensor path
         if not isinstance(weight, DTensor):
-            new_dense = _proj_impl_dense(weight, _as_dense_a(a), sparsity, prune_n, prune_m, comparison_group)
+            new_dense = _proj_impl_dense(weight, _as_dense_a(a), sparsity, prune_n, prune_m, comparison_group, is_direct_score)
             out.append(new_dense)
             continue
 
@@ -179,14 +184,14 @@ def projection(
         if _can_do_local(orig_places, comparison_group, prune_n, prune_m):
             w_local = weight.to_local().detach().clone()
             a_local = _a_to_local_if_needed(a)
-            new_local = _proj_impl_dense(w_local, a_local, sparsity, prune_n, prune_m, comparison_group)
+            new_local = _proj_impl_dense(w_local, a_local, sparsity, prune_n, prune_m, comparison_group, is_direct_score)
             new_dt = DTensor.from_local(new_local, device_mesh=mesh, placements=orig_places,shape=global_shape,stride=global_stride)
             out.append(new_dt)
         else: ## replicate (all-reduce)
             rep = weight.redistribute(placements=[Replicate()])
             dense_w = rep.to_local()
             dense_a = _as_dense_a(a)
-            new_dense = _proj_impl_dense(dense_w, dense_a, sparsity, prune_n, prune_m, comparison_group)
+            new_dense = _proj_impl_dense(dense_w, dense_a, sparsity, prune_n, prune_m, comparison_group, is_direct_score)
             new_dt = distribute_tensor(new_dense, device_mesh=mesh, placements=orig_places)
             out.append(new_dt)
     return out
