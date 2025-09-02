@@ -200,7 +200,8 @@ class ADMM(torch.optim.Adam):
                     # w.mul_(1.0 / (1.0 + gamma))
                     ##linearization
                     prox = lmda * (w.detach() - split.detach() + dual.detach())
-                    w.data.add_(prox, alpha=-g['lr']) ## w_k+1/2 = w_k - \eta \lambda (w-z+u)
+                    # w.data.add_(prox, alpha=-g['lr']) ## w_k+1/2 = w_k - \eta \lambda (w-z+u)
+                    w.data.add_(-prox) ## lr decoupling (constant penalty)
                 else:
                     prox = lmda * (w.detach() - split.detach() + dual.detach())
                     # Coupled: add to gradient, happens BEFORE optimizer step
