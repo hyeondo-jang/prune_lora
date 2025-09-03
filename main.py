@@ -194,7 +194,8 @@ if __name__ == '__main__':
     flags.DEFINE_enum('admm_projection_comparison_group', 'layer', ['layer','column', 'row'], 'Comparison group for ADMM projection (layer/column/row).')
     flags.DEFINE_enum('admm_projection_mode', 'identity', ['identity', 'activation', 'gradient','momentum', 'taylor'], 'Generalized projection mode for ADMM (identity/activation/gradient/momentum/taylor).')
     flags.DEFINE_float('admm_importance_ema', 0.00, 'EMA for importance in ADMM projection. If > 0, importance matrix is updated with EMA.')
-    
+    flags.DEFINE_float('admm_termination_threshold',1e-2,'Termination threshold for ADMM.')
+
     # ADMM Specific Config
     flags.DEFINE_float('admm_alpha', 1.0, 'Alpha parameter for ADMM over-relaxation. default is 1.0')
     flags.DEFINE_float('admm_lmda', 0.01, 'Lambda penalty parameter for ADMM (for constant schedule).')

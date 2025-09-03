@@ -696,7 +696,7 @@ class AdmmTrainingArguments(TrainingArguments):
     admm_split_dtype: str = field(default='fp32', metadata={"help": "Dtype for ADMM split variable (fp32 or bf16)."})
     admm_beta1: float = field(default=0.9, metadata={"help": "Beta1 for ADMM Adam optimizer."})
     admm_beta2: float = field(default=0.95, metadata={"help": "Beta2 for ADMM Adam optimizer."})
-    admm_termination_threshold: float = field(default=1e-3, metadata={"help": "Relative residual threshold for ADMM termination."})
+    admm_termination_threshold: float = field(default=1e-2, metadata={"help": "Relative residual threshold for ADMM termination."})
     ## LOSS
     loss_type: str = field(default="ntp", metadata={"help": "Loss type for ADMM training (should be 'rem' or 'ntp)."})
     ## gradient normalization
