@@ -1678,6 +1678,22 @@ class ADMMTrainer(Trainer):
 
             self.control = self.callback_handler.on_epoch_end(args, self.state, self.control)
             self._maybe_log_save_evaluate(tr_loss, grad_norm=None, model=model, trial=trial, epoch=epoch, ignore_keys_for_eval=ignore_keys_for_eval)
+
+            if self.args.admm_termination_threshold > 0:
+                primal_residuals = self.calculate_primal_residual(metric_key_prefix='train')
+                relative_primal_residual = primal_residuals.get("train_relative_residual")
+
+                dual_residuals = self.calculate_dual_residual(metric_key_prefix='train')
+                scaled_dual_residual = dual_residuals.get("train_scaled_dual_residual")
+
+                if relative_primal_residual is not None and scaled_dual_residual is not None:
+                    if relative_primal_residual < self.args.admm_termination_threshold and scaled_dual_residual < self.args.admm_termination_threshold:
+                        self.control.should_training_stop = True
+                        logger.info(
+                            f"Terminating training as both primal ({relative_primal_residual:.4f}) and dual ({scaled_dual_residual:.4f}) "
+                            f"residuals are below the threshold ({self.args.admm_termination_threshold})."
+                        )
+
             if DebugOption.TPU_METRICS_DEBUG in self.args.debug:
                 if is_torch_xla_available():
                     # tpu-comment: Logging debug metrics for PyTorch/XLA (compile, execute times, ops, etc.)
