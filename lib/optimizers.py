@@ -348,9 +348,18 @@ class ADMM(torch.optim.Adam):
                         log_T = math.log(T + eps)
                         new_lmda_for_param = s0 + (s1 - s0) * (log_t / log_T)
                     elif self.lmda_schedule_mode == 'exponential':
-                        if s0 <= 0 or s1 <= 0:
-                            raise ValueError("For exponential lambda schedule, both init_lmda and final_lmda must be positive.")
-                        new_lmda_for_param = s0 * (s1/s0)**(t/T)
+                        if s1 <= 0:
+                            raise ValueError("For exponential lambda schedule, final_lmda must be positive.")
+                        if s0 < 0:
+                            raise ValueError("For exponential lambda schedule, init_lmda must be non-negative.")
+
+                        if s0 == 0:
+                            # Exponential growth from a small value to avoid log(0) and division by zero.
+                            # The schedule starts near zero and grows to final_lmda.
+                            s0_eff = 1e-12
+                            new_lmda_for_param = s0_eff * (s1 / s0_eff)**(t / T)
+                        else:
+                            new_lmda_for_param = s0 * (s1/s0)**(t/T)
 
                 old_local = _loc(split)
                 new_local = _loc(z_new)
