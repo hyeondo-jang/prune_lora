@@ -290,10 +290,7 @@ class ADMM(torch.optim.Adam):
                     v_t = st.get("exp_avg_sq")
                     beta2 = g.get('betas', (0.9, 0.95))[1]
                     importance_i = v_t / (1.0 - beta2**(st.get("step", 1)))
-                    if isinstance(importance_i, DTensor):
-                        # Ensure importance_i is globally consistent for projection
-                        # This will gather the sharded exp_avg_sq to all ranks
-                        importance_i = importance_i.redistribute(placements=[Replicate()]).to_local()
+                    
                 elif self.projection_mode == "taylor":
                     m_t = st.get("exp_avg")
                     v_t = st.get("exp_avg_sq")
