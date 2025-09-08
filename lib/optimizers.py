@@ -325,7 +325,7 @@ class ADMM(torch.optim.Adam):
 
                 z_in  = (w.detach() + dual.detach())
                 z_new = self.projection([z_in], spars, self.prune_n, self.prune_m,
-                                        [importance_i], comparison_group=self.comparison_group, is_direct_score=is_direct_score, projection_mode=self.projection_mode)[0]
+                                        [importance_i], comparison_group=self.comparison_group, is_direct_score=is_direct_score)[0]
                 z_new = z_new.detach().clone().to(w.device)
 
                 u_new = dual.detach() + self.alpha * (w.detach() - z_new)
@@ -515,7 +515,7 @@ class ADMM(torch.optim.Adam):
                         importance = importance.redistribute(placements=[Replicate()]).to_local()
 
                 wnew = self.projection([w.detach()], st["sparsity"], self.prune_n, self.prune_m,
-                                       [importance], comparison_group=self.comparison_group, is_direct_score=is_direct_score, projection_mode=self.projection_mode)[0]
+                                       [importance], comparison_group=self.comparison_group, is_direct_score=is_direct_score)[0]
                 w.data.copy_(wnew)
 
     def get_mask_metrics(self) -> Dict[str, float]:
