@@ -46,13 +46,15 @@ def _a_to_local_if_needed(a):
         return a.to_local()
     return a
 
-def _can_do_local(placements, comparison_group, prune_n, prune_m) -> bool:
+def _can_do_local(placements, comparison_group, prune_n, prune_m, projection_mode) -> bool:
     """
     Determine if projection can be computed locally without replication.
     - n:m pattern is conservatively treated as global.
     - Row-wise pruning is local if Shard(0) (output-dim sharding).
     - Column-wise pruning is local if Shard(1) (input-dim sharding).
     """
+    if projection_mode == 'momentum':
+        return False
     if prune_n or prune_m:
         return False
     if not placements:
@@ -151,6 +153,7 @@ def projection(
     importance_matrix: Optional[List[torch.Tensor]] = None,
     comparison_group: str = "layer",
     is_direct_score: bool = False,
+    projection_mode: str = "identity",
 ) -> List[torch.Tensor]:
     """
     Distributed/DTensor-friendly projection.
@@ -181,7 +184,7 @@ def projection(
         if isinstance(a, DTensor) and a.placements != orig_places:
             a = a.redistribute(placements=orig_places)
 
-        if _can_do_local(orig_places, comparison_group, prune_n, prune_m):
+        if _can_do_local(orig_places, comparison_group, prune_n, prune_m, projection_mode):
             w_local = weight.to_local().detach().clone()
             a_local = _a_to_local_if_needed(a)
             new_local = _proj_impl_dense(w_local, a_local, sparsity, prune_n, prune_m, comparison_group, is_direct_score)

@@ -137,7 +137,7 @@ class ADMM(torch.optim.Adam):
 
         # Initial split z and initial_split (as bool)
         z0 = self.projection([p.detach()], st["sparsity"], self.prune_n, self.prune_m,
-                             [init_importance], comparison_group=self.comparison_group)[0]
+                             [init_importance], comparison_group=self.comparison_group, projection_mode=self.projection_mode)[0]
         st["split"] = z0.detach().clone().to(device=p.device, dtype=self.split_dtype)
         st["initial_split"] = z0.detach().ne(0).clone().to(device=p.device)
 
@@ -290,6 +290,8 @@ class ADMM(torch.optim.Adam):
                     v_t = st.get("exp_avg_sq")
                     beta2 = g.get('betas', (0.9, 0.95))[1]
                     importance_i = v_t / (1.0 - beta2**(st.get("step", 1)))
+                    if isinstance(importance_i, DTensor):
+                        importance_i = importance_i.redistribute(placements=[Replicate()]).to_local()
                     
                 elif self.projection_mode == "taylor":
                     m_t = st.get("exp_avg")
@@ -309,7 +311,7 @@ class ADMM(torch.optim.Adam):
 
                 z_in  = (w.detach() + dual.detach())
                 z_new = self.projection([z_in], spars, self.prune_n, self.prune_m,
-                                        [importance_i], comparison_group=self.comparison_group, is_direct_score=is_direct_score)[0]
+                                        [importance_i], comparison_group=self.comparison_group, is_direct_score=is_direct_score, projection_mode=self.projection_mode)[0]
                 z_new = z_new.detach().clone().to(w.device)
 
                 u_new = dual.detach() + self.alpha * (w.detach() - z_new)
@@ -321,11 +323,37 @@ class ADMM(torch.optim.Adam):
 
                 new_lmda_for_param = current_lmda
                 if self.lmda_schedule_mode == 'adaptive_boyd':
-                    r_primal_norm = torch.norm(w_l.detach() - z_new_l.detach())
-                    r_dual_norm = current_lmda * torch.norm(z_new_l.detach() - s_l.detach())
-                    if r_primal_norm > self.mu * r_dual_norm:
+                    primal_res_local = w_l.detach() - z_new_l.detach()
+                    dual_res_local = z_new_l.detach() - s_l.detach()
+
+                    # Calculate squared norms of residuals and variables for normalization
+                    primal_res_norm_sq = torch.norm(primal_res_local)**2
+                    dual_res_norm_sq = torch.norm(dual_res_local)**2
+                    weight_norm_sq = torch.norm(w_l.detach())**2
+                    split_norm_sq = torch.norm(s_l.detach())**2
+
+                    # All-reduce for global norms
+                    if dist.is_initialized():
+                        dist.all_reduce(primal_res_norm_sq, op=dist.ReduceOp.SUM)
+                        dist.all_reduce(dual_res_norm_sq, op=dist.ReduceOp.SUM)
+                        dist.all_reduce(weight_norm_sq, op=dist.ReduceOp.SUM)
+                        dist.all_reduce(split_norm_sq, op=dist.ReduceOp.SUM)
+
+                    # Calculate final global norms
+                    r_primal_norm = torch.sqrt(primal_res_norm_sq)
+                    r_dual_norm = torch.sqrt(dual_res_norm_sq)
+                    weight_norm = torch.sqrt(weight_norm_sq)
+                    split_norm = torch.sqrt(split_norm_sq)
+
+                    # Normalize residuals for scale-invariant comparison
+                    eps = 1e-8
+                    norm_r_scaled = r_primal_norm / (weight_norm + eps)
+                    norm_s_scaled = r_dual_norm / (split_norm + eps)
+
+                    # Update lambda based on scaled residuals
+                    if norm_r_scaled > self.mu * norm_s_scaled:
                         new_lmda_for_param = current_lmda * self.tau_incr
-                    elif r_dual_norm > self.mu * r_primal_norm:
+                    elif norm_s_scaled > self.mu * norm_r_scaled:
                         new_lmda_for_param = current_lmda / self.tau_decr
                 else:
                     t = self.current_step
@@ -455,8 +483,8 @@ class ADMM(torch.optim.Adam):
                     v_t = st.get("exp_avg_sq")
                     beta2 = g.get('betas', (0.9, 0.95))[1]
                     importance = v_t / (1.0 - beta2**(st.get("step", 1)))
-                    # if isinstance(importance, DTensor):
-                    #     importance = importance.redistribute(placements=[Replicate()]).to_local()
+                    if isinstance(importance, DTensor):
+                        importance = importance.redistribute(placements=[Replicate()]).to_local()
                 elif self.projection_mode == "taylor":
                     m_t = st.get("exp_avg")
                     v_t = st.get("exp_avg_sq")
@@ -470,7 +498,7 @@ class ADMM(torch.optim.Adam):
                         importance = importance.redistribute(placements=[Replicate()]).to_local()
 
                 wnew = self.projection([w.detach()], st["sparsity"], self.prune_n, self.prune_m,
-                                       [importance], comparison_group=self.comparison_group, is_direct_score=is_direct_score)[0]
+                                       [importance], comparison_group=self.comparison_group, is_direct_score=is_direct_score, projection_mode=self.projection_mode)[0]
                 w.data.copy_(wnew)
 
     def get_mask_metrics(self) -> Dict[str, float]:
