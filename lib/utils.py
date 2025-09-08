@@ -38,33 +38,9 @@ def _as_dense_a(a):
         return a.redistribute(placements=[Replicate()]).to_local()
     return a
 
-def _a_to_local_if_needed(a):
-    """Return local shard or the tensor itself."""
-    if a is None:
-        return None
-    if isinstance(a, DTensor):
-        return a.to_local()
-    return a
 
-def _can_do_local(placements, comparison_group, prune_n, prune_m, projection_mode) -> bool:
-    """
-    Determine if projection can be computed locally without replication.
-    - n:m pattern is conservatively treated as global.
-    - Row-wise pruning is local if Shard(0) (output-dim sharding).
-    - Column-wise pruning is local if Shard(1) (input-dim sharding).
-    """
-    if projection_mode == 'momentum':
-        return False
-    if prune_n or prune_m:
-        return False
-    if not placements:
-        return False
-    p = placements[0]
-    if comparison_group == "row" and isinstance(p, Shard) and getattr(p, "dim", 0) == 0:
-        return True
-    if comparison_group == "column" and isinstance(p, Shard) and getattr(p, "dim", 1) == 1:
-        return True
-    return False
+
+
 
 
 def _proj_impl_dense(
@@ -153,13 +129,10 @@ def projection(
     importance_matrix: Optional[List[torch.Tensor]] = None,
     comparison_group: str = "layer",
     is_direct_score: bool = False,
-    projection_mode: str = "identity",
 ) -> List[torch.Tensor]:
     """
     Distributed/DTensor-friendly projection.
-    If weight is a DTensor:
-      - If sharding dim matches comparison_group, run locally (no comms).
-      - Else Replicate → project → redistribute to original sharding.
+    If weight is a DTensor, it is always replicated before projection.
     """
     assert comparison_group in ("layer", "column", "row")
     use_a = importance_matrix is not None
@@ -170,33 +143,24 @@ def projection(
     for i, weight in enumerate(w):
         a = importance_matrix[i] if use_a else None
 
-        # Dense tensor path
-        if not isinstance(weight, DTensor):
-            new_dense = _proj_impl_dense(weight, _as_dense_a(a), sparsity, prune_n, prune_m, comparison_group, is_direct_score)
-            out.append(new_dense)
-            continue
-
-        mesh = weight.device_mesh
-        orig_places = weight.placements
-        global_shape = tuple(weight.shape)
-        global_stride = weight.stride()
-
-        if isinstance(a, DTensor) and a.placements != orig_places:
-            a = a.redistribute(placements=orig_places)
-
-        if _can_do_local(orig_places, comparison_group, prune_n, prune_m, projection_mode):
-            w_local = weight.to_local().detach().clone()
-            a_local = _a_to_local_if_needed(a)
-            new_local = _proj_impl_dense(w_local, a_local, sparsity, prune_n, prune_m, comparison_group, is_direct_score)
-            new_dt = DTensor.from_local(new_local, device_mesh=mesh, placements=orig_places,shape=global_shape,stride=global_stride)
-            out.append(new_dt)
-        else: ## replicate (all-reduce)
-            rep = weight.redistribute(placements=[Replicate()])
-            dense_w = rep.to_local()
+        if isinstance(weight, DTensor):
+            # Always replicate DTensor to a dense tensor for projection
+            mesh = weight.device_mesh
+            orig_places = weight.placements
+            
+            dense_w = _as_dense_a(weight)
             dense_a = _as_dense_a(a)
+
             new_dense = _proj_impl_dense(dense_w, dense_a, sparsity, prune_n, prune_m, comparison_group, is_direct_score)
+            
+            # Redistribute the result back to the original sharding
             new_dt = distribute_tensor(new_dense, device_mesh=mesh, placements=orig_places)
             out.append(new_dt)
+        else:
+            # It's a regular dense tensor
+            new_dense = _proj_impl_dense(weight, _as_dense_a(a), sparsity, prune_n, prune_m, comparison_group, is_direct_score)
+            out.append(new_dense)
+            
     return out
 
 # def projection(
