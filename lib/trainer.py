@@ -496,6 +496,7 @@ class ADMMTrainer(Trainer):
                     sparsity=self.args.sparsity_ratio, 
                     interval=self.args.admm_interval,
                     lmda_schedule_mode=self.args.admm_lmda_schedule_mode, 
+                    init_lambda_from_inv_resid=self.args.admm_init_lambda_from_inv_resid,
                     total_steps=self.args.max_steps,
                     mu=self.args.admm_mu, 
                     tau_incr=self.args.admm_tau_incr, 

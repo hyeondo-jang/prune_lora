@@ -145,7 +145,7 @@ class ADMM(torch.optim.Adam):
 
         if self.init_lambda_from_inv_resid:
             initial_residual = torch.norm(p.detach() - z0.detach())
-            st["lmda"] = 1.0 / (initial_residual + 1e-8)
+            st["lmda"] = self.lmda_default / (initial_residual + 1e-8)
         
         st["split"] = z0.detach().clone().to(device=p.device, dtype=self.split_dtype)
         st["initial_split"] = z0.detach().ne(0).clone().to(device=p.device)
