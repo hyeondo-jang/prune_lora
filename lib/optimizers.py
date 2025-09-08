@@ -140,7 +140,7 @@ class ADMM(torch.optim.Adam):
 
         # Initial split z and initial_split (as bool)
         z0 = self.projection([p.detach()], st["sparsity"], self.prune_n, self.prune_m,
-                             [init_importance], comparison_group=self.comparison_group, projection_mode=self.projection_mode)[0]
+                             [init_importance], comparison_group=self.comparison_group)[0]
         if self.init_lambda_from_inv_resid:
             initial_residual = torch.norm(p.detach() - z0.detach())
             st["lmda"] = self.lmda_default / (initial_residual.item() + 1e-8)
