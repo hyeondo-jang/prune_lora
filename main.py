@@ -205,7 +205,7 @@ if __name__ == '__main__':
     flags.DEFINE_float('admm_mu', 10.0, 'Mu parameter for Adaptive penalty ADMM')
     flags.DEFINE_float('admm_tau_incr', 2.0, 'Tau increase factor for Adaptive penalty ADMM')
     flags.DEFINE_float('admm_tau_decr', 2.0, 'Tau decrease factor for Adaptive penalty ADMM')
-    flags.DEFINE_enum('admm_lmda_schedule_mode', 'constant', ['constant','linear','exponential','cosine', 'adaptive_boyd'], 'Mode for lambda schedule (e.g., linear, cosine).')
+    flags.DEFINE_enum('admm_lmda_schedule_mode', 'constant', ['constant','linear','exponential','cosine', 'adaptive_boyd', 'adaptive_residual'], 'Mode for lambda schedule (e.g., linear, cosine).')
     flags.DEFINE_enum('admm_sparsity_schedule_mode', 'constant', ['constant','linear','exponential','cosine','cubic','cubic'], 'Mode for sparsity schedule (e.g., cubic, linear).')
     flags.DEFINE_float('admm_peak_sparsity_step', 1, 'Step ratio (0-1) at which peak sparsity is reached in ADMM training. e.g. 0.3 means peak sparsity is reached at step*0.3 (used only when admm_sparsity_schedule_mode is not constant)')
     flags.DEFINE_integer('admm_interval', 2, 'Interval for ADMM projection and dual updates.')

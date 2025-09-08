@@ -140,6 +140,11 @@ class ADMM(torch.optim.Adam):
         # Initial split z and initial_split (as bool)
         z0 = self.projection([p.detach()], st["sparsity"], self.prune_n, self.prune_m,
                              [init_importance], comparison_group=self.comparison_group, projection_mode=self.projection_mode)[0]
+        
+        if self.lmda_schedule_mode == 'adaptive_residual':
+            initial_residual = torch.norm(p.detach() - z0.detach())
+            st["lmda"] = 1.0 / (initial_residual + 1e-8)
+
         st["split"] = z0.detach().clone().to(device=p.device, dtype=self.split_dtype)
         st["initial_split"] = z0.detach().ne(0).clone().to(device=p.device)
 
