@@ -669,7 +669,8 @@ class AdmmTrainingArguments(TrainingArguments):
     admm_lmda: float = field(default=0.001, metadata={"help": "Lambda (rho) penalty parameter for ADMM (constant schedule)."})
     admm_init_lmda: float = field(default=0.0, metadata={"help": "Initial lambda for ADMM scheduling."})
     admm_final_lmda: float = field(default=0.01, metadata={"help": "Final lambda for ADMM scheduling."})
-    admm_lmda_schedule_mode: str = field(default='constant', metadata={"help": "Mode for lambda schedule (linear/cosine/exponential/constant/adaptive_residual)."})
+    admm_init_lambda_from_inv_resid: bool = field(default=False, metadata={"help": "Initialize lambda from inverse of initial residual."})
+    admm_lmda_schedule_mode: str = field(default='constant', metadata={"help": "Mode for lambda schedule (linear/cosine/exponential/constant)."})
     admm_mu: float = field(default=10.0, metadata={"help": "Mu parameter for ADMM penalty update."})
     admm_tau_incr: float = field(default=2.0, metadata={"help": "Tau increase factor for ADMM."})
     admm_tau_decr: float = field(default=2.0, metadata={"help": "Tau decrease factor for ADMM."})
@@ -755,6 +756,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         admm_tau_decr = FLAGS.admm_tau_decr,
         admm_init_lmda=FLAGS.admm_init_lmda,
         admm_final_lmda=FLAGS.admm_final_lmda,
+        admm_init_lambda_from_inv_resid=FLAGS.admm_init_lambda_from_inv_resid,
         admm_lmda_schedule_mode=FLAGS.admm_lmda_schedule_mode,
         sparsity_ratio=FLAGS.sparsity_ratio,
         admm_adaptive_sparsity=FLAGS.admm_adaptive_sparsity,

@@ -47,6 +47,7 @@ class ADMM(torch.optim.Adam):
         dual_dtype: str = 'fp32',
         split_dtype: str = 'fp32',
         accelerator=None,                    # optional: to get world_size and device
+        init_lambda_from_inv_resid: bool = False,
         **adamw_kwargs
     ):
         super().__init__(param_groups, **adamw_kwargs)
@@ -59,6 +60,7 @@ class ADMM(torch.optim.Adam):
         self.init_lmda = float(init_lmda)
         self.final_lmda = float(final_lmda)
         self.lmda_schedule_mode = lmda_schedule_mode.lower()
+        self.init_lambda_from_inv_resid = init_lambda_from_inv_resid
 
         if self.lmda_schedule_mode == 'constant':
             self.lmda_default = float(lmda)
@@ -140,11 +142,11 @@ class ADMM(torch.optim.Adam):
         # Initial split z and initial_split (as bool)
         z0 = self.projection([p.detach()], st["sparsity"], self.prune_n, self.prune_m,
                              [init_importance], comparison_group=self.comparison_group, projection_mode=self.projection_mode)[0]
-        
-        if self.lmda_schedule_mode == 'adaptive_residual':
+
+        if self.init_lambda_from_inv_resid:
             initial_residual = torch.norm(p.detach() - z0.detach())
             st["lmda"] = 1.0 / (initial_residual + 1e-8)
-
+        
         st["split"] = z0.detach().clone().to(device=p.device, dtype=self.split_dtype)
         st["initial_split"] = z0.detach().ne(0).clone().to(device=p.device)
 
