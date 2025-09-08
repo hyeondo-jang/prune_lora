@@ -66,6 +66,7 @@ class ADMM(torch.optim.Adam):
             self.lmda_default = float(lmda)
         else:
             self.lmda_default = float(init_lmda) # Use init_lmda as the default starting value
+
         self.total_steps     = int(total_steps)
         self.mu              = float(mu)
         self.tau_incr        = float(tau_incr)
@@ -128,8 +129,6 @@ class ADMM(torch.optim.Adam):
         # --- Initialize ADMM's state ---
         st["dual"] = torch.zeros_like(p, dtype=self.dual_dtype, memory_format=torch.preserve_format)
         st["sparsity"] = self.sparsity
-        st["lmda"] = group.get("lmda", self.lmda_default)
-        st["prev_lmda"] = st["lmda"]
 
         # Optional importance buffer
         init_importance = None
@@ -142,11 +141,14 @@ class ADMM(torch.optim.Adam):
         # Initial split z and initial_split (as bool)
         z0 = self.projection([p.detach()], st["sparsity"], self.prune_n, self.prune_m,
                              [init_importance], comparison_group=self.comparison_group, projection_mode=self.projection_mode)[0]
-
         if self.init_lambda_from_inv_resid:
             initial_residual = torch.norm(p.detach() - z0.detach())
-            st["lmda"] = self.lmda_default / (initial_residual + 1e-8)
-        
+            st["lmda"] = self.lmda_default / (initial_residual.item() + 1e-8)
+            st['prev_lmda'] = st["lmda"]
+        else:
+            st["lmda"] = self.lmda_default
+            st['prev_lmda'] = self.lmda_default
+
         st["split"] = z0.detach().clone().to(device=p.device, dtype=self.split_dtype)
         st["initial_split"] = z0.detach().ne(0).clone().to(device=p.device)
 
@@ -374,7 +376,7 @@ class ADMM(torch.optim.Adam):
                     s1 = self.final_lmda
 
                     if self.lmda_schedule_mode == 'constant':
-                        new_lmda_for_param = self.lmda_default
+                        new_lmda_for_param = current_lmda
                     elif self.lmda_schedule_mode == 'linear':
                         new_lmda_for_param = s0 + (s1 - s0) * (t / T)
                     elif self.lmda_schedule_mode == 'cosine':

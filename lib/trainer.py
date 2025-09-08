@@ -1628,7 +1628,8 @@ class ADMMTrainer(Trainer):
                         mask_metrics = unwrapped_optimizer.get_mask_metrics()
                         lmda_stats = unwrapped_optimizer.get_lmda_stats()
                         if self.is_world_process_zero():
-                            logger.info(f'ADMM Step {self.state.global_step}:                                 Mask Hamming (step): {mask_metrics["step_hamming"]:.4f},                                 Mask Hamming (initial): {mask_metrics["initial_hamming"]:.4f},                                 Mask IoU (step): {mask_metrics["step_iou"]:.4f},                                 Mask IoU (initial): {mask_metrics["initial_iou"]:.4f},                                 Avg lmda: {lmda_stats["avg_lmda"]:.4e}')
+                            logger.info(f'ADMM Step {self.state.global_step}: Mask Hamming (step): {mask_metrics["step_hamming"]:.4f}, '
+                                        f'Mask Hamming (initial): {mask_metrics["initial_hamming"]:.4f}, Mask IoU (step): {mask_metrics["step_iou"]:.4f}, Mask IoU (initial): {mask_metrics["initial_iou"]:.4f}, Avg lmda: {lmda_stats["avg_lmda"]:.4e}')
                             wandb_metrics = {
                                 'ADMM_mask_hamming_step': mask_metrics["step_hamming"],
                                 'ADMM_mask_hamming_initial': mask_metrics["initial_hamming"],
