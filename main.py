@@ -193,6 +193,7 @@ if __name__ == '__main__':
     flags.DEFINE_enum('admm_precision', 'bf16', ['fp32', 'fp16', 'bf16'], 'Precision for ADMM training (fp16/bf16 enables Trainer autocast).')
     flags.DEFINE_enum('admm_projection_comparison_group', 'layer', ['layer','column', 'row'], 'Comparison group for ADMM projection (layer/column/row).')
     flags.DEFINE_enum('admm_projection_mode', 'identity', ['identity', 'activation', 'gradient','momentum', 'taylor'], 'Generalized projection mode for ADMM (identity/activation/gradient/momentum/taylor).')
+    flags.DEFINE_bool('admm_projection_bias_correction',False,'Whether to use bias correction in ADMM projection (for momentum/taylor).')
     flags.DEFINE_float('admm_importance_ema', 0.00, 'EMA for importance in ADMM projection. If > 0, importance matrix is updated with EMA.')
     flags.DEFINE_float('admm_termination_threshold',1e-2,'Termination threshold for ADMM.')
 

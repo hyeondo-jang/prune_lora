@@ -677,6 +677,7 @@ class AdmmTrainingArguments(TrainingArguments):
     admm_interval: int = field(default=32, metadata={"help": "Interval for ADMM projection and dual updates."})
     admm_projection_comparison_group: str = field(default='layer', metadata={"help": "Comparison group for ADMM projection (layer/column/row)."})
     admm_projection_mode: str = field(default='identity', metadata={"help": "Generalized projection mode for ADMM (identity/activation/gradient/momentum/taylor)."})
+    admm_projection_bias_correction: bool = field(default=False, metadata={"help": "Use bias correction in ADMM projection (for momentum/taylor)."})
     admm_importance_ema: float = field(default=0.00, metadata={"help": "EMA for importance in ADMM projection."})
     prune_n: int = field(default=0, metadata={"help": "N for N:M sparsity."})
     prune_m: int = field(default=0, metadata={"help": "M for N:M sparsity."})
@@ -764,6 +765,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         ## admm projection
         admm_projection_comparison_group=FLAGS.admm_projection_comparison_group,
         admm_projection_mode=FLAGS.admm_projection_mode,
+        admm_projection_bias_correction=FLAGS.admm_projection_bias_correction,
         admm_importance_ema=FLAGS.admm_importance_ema,
         prune_n=prune_n,
         prune_m=prune_m,

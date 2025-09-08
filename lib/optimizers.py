@@ -41,6 +41,7 @@ class ADMM(torch.optim.Adam):
         prune_m: int = 0,
         comparison_group: str = "layer",
         projection_mode: str = "identity",   # 'identity' | 'gradient' | 'activation'
+        projection_bias_correction: bool = False, # New: use bias correction in projection (for momentum/taylor)
         importance_ema: float = 0.0,
         decouple: bool = False,
         dual_dtype: str = 'fp32',
@@ -71,6 +72,7 @@ class ADMM(torch.optim.Adam):
         self.prune_m         = int(prune_m)
         self.comparison_group = comparison_group.lower()
         self.projection_mode  = projection_mode.lower()
+        self.projection_bias_correction = bool(projection_bias_correction)
         self.importance_ema   = float(importance_ema)
         self.decouple       = bool(decouple)
 
@@ -288,8 +290,11 @@ class ADMM(torch.optim.Adam):
                     importance_i = st.get("importance", None)
                 elif self.projection_mode == "momentum":
                     v_t = st.get("exp_avg_sq")
-                    beta2 = g.get('betas', (0.9, 0.95))[1]
-                    importance_i = v_t / (1.0 - beta2**(st.get("step", 1)))
+                    if self.projection_bias_correction:
+                        beta2 = g.get('betas', (0.9, 0.95))[1]
+                        importance_i = v_t / (1.0 - beta2**(st.get("step", 1)))
+                    else:
+                        importance_i = v_t
                     if isinstance(importance_i, DTensor):
                         importance_i = importance_i.redistribute(placements=[Replicate()]).to_local()
                     
@@ -481,8 +486,11 @@ class ADMM(torch.optim.Adam):
                     importance = st.get("importance", None)
                 elif self.projection_mode == "momentum":
                     v_t = st.get("exp_avg_sq")
-                    beta2 = g.get('betas', (0.9, 0.95))[1]
-                    importance = v_t / (1.0 - beta2**(st.get("step", 1)))
+                    if self.projection_bias_correction:
+                        beta2 = g.get('betas', (0.9, 0.95))[1]
+                        importance = v_t / (1.0 - beta2**(st.get("step", 1)))
+                    else:
+                        importance = v_t
                     if isinstance(importance, DTensor):
                         importance = importance.redistribute(placements=[Replicate()]).to_local()
                 elif self.projection_mode == "taylor":
@@ -492,7 +500,7 @@ class ADMM(torch.optim.Adam):
                     beta1, beta2 = g.get('betas', (0.9, 0.999))
                     m_hat = m_t / (1.0 - beta1**step)
                     v_hat = v_t / (1.0 - beta2**step)
-                    importance_i = 1.0/2.0 * v_hat * (w.detach()**2) - m_hat*w.detach()
+                    importance = 1.0/2.0 * v_hat * (w.detach()**2) - m_hat*w.detach()
                     # importance = (torch.sqrt(v_hat) * w.detach() - m_hat / torch.sqrt(v_hat))
                     if isinstance(importance, DTensor):
                         importance = importance.redistribute(placements=[Replicate()]).to_local()

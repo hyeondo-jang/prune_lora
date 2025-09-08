@@ -505,6 +505,7 @@ class ADMMTrainer(Trainer):
                     prune_m=self.args.prune_m, 
                     comparison_group=self.args.admm_projection_comparison_group,
                     projection_mode=self.args.admm_projection_mode,
+                    projection_bias_correction=self.args.admm_projection_bias_correction,
                     importance_ema=self.args.admm_importance_ema,
                     decouple=self.args.decouple_admm,
                     split_dtype=self.args.admm_split_dtype,
