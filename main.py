@@ -95,13 +95,20 @@ def main(argv):
         else:
             globalprune_admm(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
 
+        ## TODO: need to check sparsity in local / global method
         if is_distributed:
             dist.barrier() # wait for main process to finish pruning
             if FLAGS.prune_method != 'global_admm':
-                state_dict = model.state_dict()
-                torch.distributed.broadcast_object_list([state_dict], src=0)
+                if local_rank == 0:
+                    state_dict = model.state_dict()
+                else:
+                    state_dict = None
+                
+                object_list = [state_dict]
+                torch.distributed.broadcast_object_list(object_list, src=0)
+                
                 if local_rank != 0:
-                    model.load_state_dict(state_dict)
+                    model.load_state_dict(object_list[0])
 
     if local_rank == 0:
         logging.info("Pruning finished")
