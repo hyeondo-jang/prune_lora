@@ -14,6 +14,11 @@ class RetrainTrainingArguments(TrainingArguments):
     retrain_steps: int = field(default=100, metadata={"help": "The number of training steps for retraining."})
     gradient_accumulation_steps: int = field(default=1, metadata={"help": "Number of gradient accumulation steps."})
 
+class Retrainer(Trainer):
+    def create_optimizer(self):
+        self.optimizer = MaskedAdam(self.model.parameters(), lr=self.args.learning_rate)
+        return self.optimizer
+
 def retrain_model(args, model, tokenizer, device):
     """
     Retrains the pruned model using the Hugging Face Trainer and MaskedAdam optimizer.
@@ -43,13 +48,10 @@ def retrain_model(args, model, tokenizer, device):
         seqlen=model.seqlen,
     )
 
-    optimizer = MaskedAdam(model.parameters(), lr=retrain_args.learning_rate)
-
-    trainer = Trainer(
+    trainer = Retrainer(
         model=model,
         args=retrain_args,
         train_dataset=train_dataset,
-        optimizers=(optimizer, None),
     )
 
     trainer.train()
