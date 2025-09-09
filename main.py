@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from transformers import AutoTokenizer
 from lib.prune import prune_safe, prune_alps, prune_wanda, prune_magnitude, prune_sparsegpt, prune_admm, globalprune_admm
+from lib.retrain import retrain_model
 from lib.eval import eval_ppl, eval_zero_shot
 from lib.utils import check_sparsity, get_llm
 from absl import logging, app, flags
@@ -25,9 +26,12 @@ FLAGS = flags.FLAGS
 def main(argv):
     global FLAGS
     arguments = FLAGS.flag_values_dict() 
+    world_size = int(os.environ.get("WORLD_SIZE", 1))
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    if int(os.environ.get("WORLD_SIZE", "1")) > 1:
-        dist.init_process_group(backend='cuda:nccl,cpu:gloo')
+    is_distributed = world_size > 1
+
+    if is_distributed:
+        dist.init_process_group(backend='nccl')
 
     if FLAGS.wandb and local_rank == 0:
         wandb.init(project=FLAGS.wandb_project)
@@ -62,52 +66,66 @@ def main(argv):
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(FLAGS.model, use_fast=False)
 
-    # torchrun/accelerate sets this environment variable
     device = torch.device(f"cuda:{local_rank}")
     torch.cuda.set_device(device)
 
-    if not (FLAGS.prune_method == 'global_admm'): ## local methods (fp32 casting is done in layer-wise)
+    if FLAGS.prune_method != 'global_admm':
         model = model.to(torch.float16)
         model = model.to(device)
     else:
         model = model.to('cpu')
         model.config.use_cache = False
 
-    logging.info(f"Process {local_rank} uses device {device}")
     if FLAGS.sparsity_ratio != 0:
-        logging.info("pruning starts")
-        ### local pruners
-        if FLAGS.prune_method == "wanda":
-            prune_wanda(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
-        elif FLAGS.prune_method == "magnitude":
-            prune_magnitude(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
-        elif FLAGS.prune_method == "sparsegpt":
-            prune_sparsegpt(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
-        elif FLAGS.prune_method == "safe":
-            prune_safe(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
-        elif FLAGS.prune_method == "alps":
-            prune_alps(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
-        elif FLAGS.prune_method == 'global_admm':
+        if FLAGS.prune_method != 'global_admm':
+            if local_rank == 0:
+                logging.info("pruning starts")
+                if FLAGS.prune_method == "wanda":
+                    prune_wanda(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+                elif FLAGS.prune_method == "magnitude":
+                    prune_magnitude(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+                elif FLAGS.prune_method == "sparsegpt":
+                    prune_sparsegpt(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+                elif FLAGS.prune_method == "safe":
+                    prune_safe(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+                elif FLAGS.prune_method == "alps":
+                    prune_alps(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+                elif FLAGS.prune_method == 'dense':
+                    logging.info("No pruning applied, model remains dense.")
+        else:
             globalprune_admm(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
-        elif FLAGS.prune_method == 'dense':
-            logging.info("No pruning applied, model remains dense.")
-    
+
+        if is_distributed:
+            dist.barrier() # wait for main process to finish pruning
+            if FLAGS.prune_method != 'global_admm':
+                state_dict = model.state_dict()
+                torch.distributed.broadcast_object_list([state_dict], src=0)
+                if local_rank != 0:
+                    model.load_state_dict(state_dict)
+
     if local_rank == 0:
         logging.info("Pruning finished")
-    
-    if int(os.environ.get("WORLD_SIZE", 1)) > 1: ## destroy other process, gather params.
+
+    if FLAGS.do_retrain:
+        if FLAGS.retrain_dataset is None:
+            FLAGS.retrain_dataset = FLAGS.dataset
         if local_rank == 0:
-            logging.info("Gathering models from fsdp")
-        dist.barrier()
-        state_dict_options = StateDictOptions(full_state_dict=True, cpu_offload=True)
-        full_state = get_model_state_dict(model, options=state_dict_options)     # gather params, send to cpu.
+            logging.info("--- Starting Retraining Phase ---")
+        retrain_model(FLAGS, model, tokenizer, device)
+        if local_rank == 0:
+            logging.info("--- Retraining Finished ---")
+
+        if is_distributed:
+            dist.barrier()
+            state_dict_options = StateDictOptions(full_state_dict=True, cpu_offload=True)
+            full_state = get_model_state_dict(model, options=state_dict_options)
+            if local_rank == 0:
+                model = get_llm(FLAGS.model, FLAGS.seqlen)
+                model.load_state_dict(full_state)
+
+    if is_distributed:
         dist.destroy_process_group()
 
-    if int(os.environ.get("RANK", "0")) == 0 and int(os.environ.get("WORLD_SIZE",1)) > 1:
-        logging.info("Loading full model state dict.")
-        model = get_llm(FLAGS.model, FLAGS.seqlen)
-        model.load_state_dict(full_state)
-    
     if local_rank == 0:
         
         model = model.to(torch.float16)
@@ -228,6 +246,14 @@ if __name__ == '__main__':
     flags.DEFINE_bool('admm_do_retrain', False, 'Whether to perform a short retraining phase after ADMM pruning.')
     flags.DEFINE_float('admm_retrain_step_ratio', 0.1, 'Ratio of original ADMM steps to use for final retraining.')
     flags.DEFINE_float('admm_retrain_lr', 1e-4, 'Learning rate for the final retraining phase.')
+
+    # Retraining
+    flags.DEFINE_bool('do_retrain', False, 'Whether to perform a retraining phase after pruning.')
+    flags.DEFINE_string('retrain_dataset', 'c4', 'Dataset for retraining.')
+    flags.DEFINE_integer('retrain_epochs', 1, 'Number of epochs for retraining.')
+    flags.DEFINE_float('retrain_learning_rate', 2e-5, 'Learning rate for the MaskedAdam optimizer.')
+    flags.DEFINE_integer('retrain_batch_size', 2, 'The batch size per device for retraining.')
+    flags.DEFINE_integer('retrain_steps', 100, 'The number of training steps for retraining.')
     
     # Logging & Evaluation
     flags.DEFINE_integer('admm_logging_steps', 1, 'Logging step interval for ADMM training.')
