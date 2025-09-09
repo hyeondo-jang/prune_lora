@@ -45,6 +45,7 @@ def retrain_model(args, model, tokenizer, device):
         nsamples=num_train_samples,
         seed=args.seed,
         seqlen=model.seqlen,
+        data_path=args.data_path
     )
 
     trainer = Retrainer(
