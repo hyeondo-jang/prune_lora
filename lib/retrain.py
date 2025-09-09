@@ -7,6 +7,9 @@ from .data import get_dataset
 import os
 import torch.distributed as dist
 from transformers.optimization import get_scheduler
+from transformers.utils import is_sagemaker_mp_enabled
+import math
+from trainer import Retrainer
 
 @dataclass
 class RetrainTrainingArguments(TrainingArguments):
@@ -14,16 +17,6 @@ class RetrainTrainingArguments(TrainingArguments):
     retrain_batch_size: int = field(default=2, metadata={"help": "The batch size per device for retraining."})
     retrain_steps: int = field(default=100, metadata={"help": "The number of training steps for retraining."})
     gradient_accumulation_steps: int = field(default=1, metadata={"help": "Number of gradient accumulation steps."})
-
-class Retrainer(Trainer):
-    def create_optimizer_and_scheduler(self, num_training_steps: int):
-        self.optimizer = MaskedAdam(self.model.parameters(), lr=self.args.learning_rate)
-        self.lr_scheduler = get_scheduler(
-            name="linear",
-            optimizer=self.optimizer,
-            num_warmup_steps=0,
-            num_training_steps=num_training_steps,
-        )
 
 def retrain_model(args, model, tokenizer, device):
     """
