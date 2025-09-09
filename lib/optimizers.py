@@ -569,11 +569,11 @@ class MaskedAdam(torch.optim.Adam):
     """
     def __init__(self, params, *args, **kwargs):
         super().__init__(params, *args, **kwargs)
-        with torch.no_grad():
-            for group in self.param_groups:
-                for p in group['params']:
-                    if p.dim() > 1: # Typically, we only prune weights, not biases
-                        self.state[p]['mask'] = (p.data != 0).clone()
+
+    def _lazy_init_mask(self, p):
+        if 'mask' not in self.state[p]:
+            if p.dim() > 1:
+                self.state[p]['mask'] = (p.detach() != 0).clone()
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -584,8 +584,10 @@ class MaskedAdam(torch.optim.Adam):
         
         for group in self.param_groups:
             for p in group['params']:
+                self._lazy_init_mask(p)
                 if 'mask' in self.state[p]:
                     p.data.mul_(self.state[p]['mask'])
+
 
 
 
