@@ -249,11 +249,11 @@ if __name__ == '__main__':
 
     # Retraining
     flags.DEFINE_bool('do_retrain', False, 'Whether to perform a retraining phase after pruning.')
-    flags.DEFINE_string('retrain_dataset', 'c4', 'Dataset for retraining.')
-    flags.DEFINE_integer('retrain_epochs', 1, 'Number of epochs for retraining.')
+    flags.DEFINE_string('retrain_dataset', None, 'Dataset for retraining.')
     flags.DEFINE_float('retrain_learning_rate', 2e-5, 'Learning rate for the MaskedAdam optimizer.')
     flags.DEFINE_integer('retrain_batch_size', 2, 'The batch size per device for retraining.')
     flags.DEFINE_integer('retrain_steps', 100, 'The number of training steps for retraining.')
+    flags.DEFINE_integer('retrain_gradient_accumulation_steps', 1, 'Gradient accumulation steps for retraining.')
     
     # Logging & Evaluation
     flags.DEFINE_integer('admm_logging_steps', 1, 'Logging step interval for ADMM training.')
