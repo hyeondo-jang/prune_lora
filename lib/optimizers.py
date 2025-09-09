@@ -48,6 +48,7 @@ class ADMM(torch.optim.Adam):
         split_dtype: str = 'fp32',
         accelerator=None,                    # optional: to get world_size and device
         init_lambda_from_inv_resid: bool = False,
+        normalize_prox_grad: bool = False,
         **adamw_kwargs
     ):
         super().__init__(param_groups, **adamw_kwargs)
@@ -61,6 +62,7 @@ class ADMM(torch.optim.Adam):
         self.final_lmda = float(final_lmda)
         self.lmda_schedule_mode = lmda_schedule_mode.lower()
         self.init_lambda_from_inv_resid = init_lambda_from_inv_resid
+        self.normalize_prox_grad = normalize_prox_grad
 
         if self.lmda_schedule_mode == 'constant':
             self.lmda_default = float(lmda)
@@ -210,11 +212,21 @@ class ADMM(torch.optim.Adam):
                     # w.add_(gamma * a)
                     # w.mul_(1.0 / (1.0 + gamma))
                     ##linearization
-                    prox = lmda * (w.detach() - split.detach() + dual.detach())
+                    penalty = w.detach() - split.detach() + dual.detach()
+                    if self.normalize_prox_grad:
+                        penalty_norm = torch.norm(penalty)
+                        if penalty_norm > 1e-9:
+                            penalty = penalty / penalty_norm
+                    prox = lmda * penalty
                     # w.data.add_(prox, alpha=-g['lr']) ## w_k+1/2 = w_k - \eta \lambda (w-z+u)
                     w.data.add_(-prox) ## lr decoupling (constant penalty)
                 else:
-                    prox = lmda * (w.detach() - split.detach() + dual.detach())
+                    penalty = w.detach() - split.detach() + dual.detach()
+                    if self.normalize_prox_grad:
+                        penalty_norm = torch.norm(penalty)
+                        if penalty_norm > 1e-9:
+                            penalty = penalty / penalty_norm
+                    prox = lmda * penalty
                     # Coupled: add to gradient, happens BEFORE optimizer step
                     # Match AMP grad dtype and distributed averaging scale
                     prox_local = _loc(prox)

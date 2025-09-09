@@ -703,6 +703,7 @@ class AdmmTrainingArguments(TrainingArguments):
     loss_type: str = field(default="ntp", metadata={"help": "Loss type for ADMM training (should be 'rem' or 'ntp)."})
     ## gradient normalization
     normalize_grad: bool = field(default=False, metadata={"help": "Normalize gradients during ADMM training. Note that gradient normalization is only performed with respect to the gradients of the training objective."})
+    normalize_prox_grad: bool = field(default=False, metadata={"help": "Normalize the proximal gradient in ADMM."})
 
 # --- globalprune_admm function ---
 def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
@@ -783,6 +784,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         admm_termination_threshold=FLAGS.admm_termination_threshold,
         ## gradient normalization
         normalize_grad=FLAGS.normalize_grad,
+        normalize_prox_grad=FLAGS.normalize_prox_grad,
     )
 
     # --- 로깅은 메인 프로세스에서만 수행 ---

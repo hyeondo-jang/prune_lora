@@ -511,6 +511,7 @@ class ADMMTrainer(Trainer):
                     decouple=self.args.decouple_admm,
                     split_dtype=self.args.admm_split_dtype,
                     accelerator=self.accelerator,
+                    normalize_prox_grad=self.args.normalize_prox_grad,
                     **base_optimizer_kwargs,
                 )
             if self.is_world_process_zero():
