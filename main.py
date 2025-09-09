@@ -252,7 +252,7 @@ if __name__ == '__main__':
     flags.DEFINE_string('retrain_dataset', None, 'Dataset for retraining.')
     flags.DEFINE_float('retrain_learning_rate', 2e-5, 'Learning rate for the MaskedAdam optimizer.')
     flags.DEFINE_integer('retrain_batch_size', 2, 'The batch size per device for retraining.')
-    flags.DEFINE_integer('retrain_steps', 100, 'The number of training steps for retraining.')
+    flags.DEFINE_integer('retrain_steps', 10, 'The number of training steps for retraining.')
     flags.DEFINE_integer('retrain_gradient_accumulation_steps', 1, 'Gradient accumulation steps for retraining.')
     
     # Logging & Evaluation

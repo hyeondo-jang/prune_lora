@@ -9,7 +9,7 @@ import torch.distributed as dist
 from transformers.optimization import get_scheduler
 from transformers.utils import is_sagemaker_mp_enabled
 import math
-from trainer import Retrainer
+from .trainer import Retrainer
 
 @dataclass
 class RetrainTrainingArguments(TrainingArguments):
@@ -34,7 +34,7 @@ def retrain_model(args, model, tokenizer, device):
         logging_steps=10,
         save_strategy="no",
         report_to=[],
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        gradient_accumulation_steps=args.retrain_gradient_accumulation_steps,
     )
 
     num_train_samples = retrain_args.max_steps * retrain_args.train_batch_size * retrain_args.gradient_accumulation_steps * world_size
