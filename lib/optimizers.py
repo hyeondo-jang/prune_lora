@@ -304,8 +304,6 @@ class ADMM(torch.optim.Adam):
                         importance_i = v_t / (1.0 - beta2**(st.get("step", 1)))
                     else:
                         importance_i = v_t
-                    if isinstance(importance_i, DTensor):
-                        importance_i = importance_i.redistribute(placements=[Replicate()]).to_local()
                     
                 elif self.projection_mode == "taylor":
                     m_t = st.get("exp_avg")
