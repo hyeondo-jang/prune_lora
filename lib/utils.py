@@ -679,3 +679,40 @@ def mask_grad(model):
             W = subset[name].weight.data
             mask = (W==0)
             subset[name].weight.grad[mask]= 0
+
+import logging as stdlogging
+
+logger = stdlogging.getLogger(__name__)
+
+def start_record_memory_history() -> None:
+   if not torch.cuda.is_available():
+       logger.info("CUDA unavailable. Not recording memory history")
+       return
+
+   logger.info("Starting snapshot record_memory_history")
+   torch.cuda.memory._record_memory_history(
+       max_entries=100000
+   )
+
+def stop_record_memory_history() -> None:
+   if not torch.cuda.is_available():
+       logger.info("CUDA unavailable. Not recording memory history")
+       return
+
+   logger.info("Stopping snapshot record_memory_history")
+   torch.cuda.memory._record_memory_history(enabled=None)
+
+def export_memory_snapshot(prune_method: str = "magnitude") -> None:
+   if not torch.cuda.is_available():
+       logger.info("CUDA unavailable. Not exporting memory snapshot")
+       return
+
+   # Prefix for file names.
+   file_prefix = f"./memory/{prune_method}"
+
+   try:
+       logger.info(f"Saving snapshot to local file: {file_prefix}.pickle")
+       torch.cuda.memory._dump_snapshot(f"{file_prefix}.pickle")
+   except Exception as e:
+       logger.error(f"Failed to capture memory snapshot {e}")
+       return

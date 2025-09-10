@@ -4,7 +4,7 @@ from transformers import AutoTokenizer
 from lib.prune import prune_safe, prune_alps, prune_wanda, prune_magnitude, prune_sparsegpt, prune_admm, globalprune_admm
 from lib.retrain import retrain_model
 from lib.eval import eval_ppl, eval_zero_shot
-from lib.utils import check_sparsity, get_llm
+from lib.utils import check_sparsity, get_llm, start_record_memory_history, stop_record_memory_history, export_memory_snapshot
 from absl import logging, app, flags
 from importlib.metadata import version
 from argparse import Namespace
@@ -75,7 +75,10 @@ def main(argv):
     else:
         model = model.to('cpu')
         model.config.use_cache = False
-
+    
+    logging.info(f"Process {local_rank} uses device {device}")
+    if local_rank == 0 and FLAGS.visualize_memory:
+        start_record_memory_history()
     if FLAGS.sparsity_ratio != 0:
         logging.info("pruning starts")
         is_local_pruning = FLAGS.prune_method != 'global_admm' and FLAGS.prune_method != 'dense'
@@ -98,6 +101,13 @@ def main(argv):
             globalprune_admm(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
         elif FLAGS.prune_method == 'dense':
             logging.info("No pruning applied, model remains dense.")
+    if local_rank == 0 and FLAGS.visualize_memory:
+        export_memory_snapshot(FLAGS.prune_method)
+        stop_record_memory_history()
+        torch.cuda.memory._record_memory_history(enabled=None)
+        exit()
+    if local_rank == 0:
+        logging.info("Pruning finished")
     # ## sparsity sanity check after pruning (per-device)
     # logging.info("*"*30)
     # sparsity_ratio = check_sparsity(model,log_by_block=True)
@@ -120,10 +130,10 @@ def main(argv):
     if local_rank == 0:
         logging.info("Pruning and synchronization finished")
     ### sparsity sanity check after broadcasting
-    logging.info("*"*30)
-    sparsity_ratio = check_sparsity(model,log_by_block=True)
-    logging.info(f"sparsity sanity check {sparsity_ratio:.4f}")
-    logging.info("*"*30)
+    # logging.info("*"*30)
+    # sparsity_ratio = check_sparsity(model,log_by_block=True)
+    # logging.info(f"sparsity sanity check {sparsity_ratio:.4f}")
+    # logging.info("*"*30)
     ##TODO: check whether global_admm is compatible with retrain.
     if FLAGS.do_retrain:
         if FLAGS.retrain_dataset is None:
@@ -131,6 +141,8 @@ def main(argv):
         if local_rank == 0:
             logging.info("--- Starting Retraining Phase ---")
         retrain_model(FLAGS, model, tokenizer, device)
+
+    if int(os.environ.get("WORLD_SIZE", 1)) > 1: ## destroy other process, gather params.
         if local_rank == 0:
             logging.info("--- Retraining Finished ---")
 
@@ -281,5 +293,5 @@ if __name__ == '__main__':
     flags.DEFINE_bool('eval_zero_shot', True, 'Whether to evaluate zero-shot performance.')
     flags.DEFINE_bool('wandb', False, 'Whether to use wandb for logging.')
     flags.DEFINE_string('wandb_project', 'safe-torch', 'wandb project name.')
-    
+    flags.DEFINE_bool('visualize_memory', False, 'Whether to visualize memory usage.')
     app.run(main)
