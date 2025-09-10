@@ -3,7 +3,7 @@ import torch
 from transformers import AutoTokenizer
 from lib.prune import prune_safe, prune_alps, prune_wanda, prune_magnitude, prune_sparsegpt, prune_admm, globalprune_admm
 from lib.eval import eval_ppl, eval_zero_shot
-from lib.utils import check_sparsity, get_llm
+from lib.utils import check_sparsity, get_llm, start_record_memory_history, stop_record_memory_history, export_memory_snapshot
 from absl import logging, app, flags
 from importlib.metadata import version
 from argparse import Namespace
@@ -72,8 +72,10 @@ def main(argv):
     else:
         model = model.to('cpu')
         model.config.use_cache = False
-
+    
     logging.info(f"Process {local_rank} uses device {device}")
+    if local_rank == 0:
+        start_record_memory_history()
     if FLAGS.sparsity_ratio != 0:
         logging.info("pruning starts")
         ### local pruners
@@ -91,10 +93,13 @@ def main(argv):
             globalprune_admm(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
         elif FLAGS.prune_method == 'dense':
             logging.info("No pruning applied, model remains dense.")
-    
+    if local_rank == 0:
+        export_memory_snapshot(FLAGS.prune_method)
+        stop_record_memory_history()
+        torch.cuda.memory._record_memory_history(enabled=None)
     if local_rank == 0:
         logging.info("Pruning finished")
-    
+    exit()
     if int(os.environ.get("WORLD_SIZE", 1)) > 1: ## destroy other process, gather params.
         if local_rank == 0:
             logging.info("Gathering models from fsdp")
