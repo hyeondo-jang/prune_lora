@@ -74,7 +74,7 @@ def main(argv):
         model.config.use_cache = False
     
     logging.info(f"Process {local_rank} uses device {device}")
-    if local_rank == 0:
+    if local_rank == 0 and FLAGS.visualize_memory:
         start_record_memory_history()
     if FLAGS.sparsity_ratio != 0:
         logging.info("pruning starts")
@@ -93,13 +93,14 @@ def main(argv):
             globalprune_admm(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
         elif FLAGS.prune_method == 'dense':
             logging.info("No pruning applied, model remains dense.")
-    if local_rank == 0:
+    if local_rank == 0 and FLAGS.visualize_memory:
         export_memory_snapshot(FLAGS.prune_method)
         stop_record_memory_history()
         torch.cuda.memory._record_memory_history(enabled=None)
+        exit()
     if local_rank == 0:
         logging.info("Pruning finished")
-    exit()
+
     if int(os.environ.get("WORLD_SIZE", 1)) > 1: ## destroy other process, gather params.
         if local_rank == 0:
             logging.info("Gathering models from fsdp")
@@ -243,5 +244,5 @@ if __name__ == '__main__':
     flags.DEFINE_bool('eval_zero_shot', True, 'Whether to evaluate zero-shot performance.')
     flags.DEFINE_bool('wandb', False, 'Whether to use wandb for logging.')
     flags.DEFINE_string('wandb_project', 'safe-torch', 'wandb project name.')
-    
+    flags.DEFINE_bool('visualize_memory', False, 'Whether to visualize memory usage.')
     app.run(main)
