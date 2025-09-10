@@ -65,35 +65,6 @@ def get_admm_optimizer(base_optimizer_cls):
             normalize_prox_grad: bool = False,
             **base_optimizer_kwargs
         ):
-            # Pop ADMM-specific kwargs before calling super().__init__
-            # This is to prevent errors if the base optimizer doesn't accept them.
-            # We are not popping them from the dict directly, but rather just passing the rest.
-            admm_kwargs = {
-                'projection_fn': projection_fn,
-                'sparsity': sparsity,
-                'interval': interval,
-                'alpha': alpha,
-                'lmda': lmda,
-                'init_lmda': init_lmda,
-                'final_lmda': final_lmda,
-                'lmda_schedule_mode': lmda_schedule_mode,
-                'total_steps': total_steps,
-                'mu': mu,
-                'tau_incr': tau_incr,
-                'tau_decr': tau_decr,
-                'prune_n': prune_n,
-                'prune_m': prune_m,
-                'comparison_group': comparison_group,
-                'projection_mode': projection_mode,
-                'projection_bias_correction': projection_bias_correction,
-                'importance_ema': importance_ema,
-                'decouple': decouple,
-                'dual_dtype': dual_dtype,
-                'split_dtype': split_dtype,
-                'accelerator': accelerator,
-                'init_lambda_from_inv_resid': init_lambda_from_inv_resid,
-                'normalize_prox_grad': normalize_prox_grad,
-            }
             super().__init__(param_groups, **base_optimizer_kwargs)
 
             # --- ADMM config ---
@@ -155,15 +126,26 @@ def get_admm_optimizer(base_optimizer_cls):
 
         def _lazy_init_admm_state(self, p: torch.nn.Parameter, group: Dict):
             """
-            Lazily initialize all required states for a parameter for ADMM.
-            If ADMM state (`dual`) already exists, this function does nothing.
+            Lazily initialize all required states for a parameter for both ADMM and the base optimizer.
+            This must be called before the base optimizer's step if ADMM state is used before it,
+            as it ensures the base optimizer's state is created before we add our own ADMM state.
             """
             st = self.state[p]
             if 'dual' in st:
                 return
 
-            # The base optimizer (e.g., Adam) is responsible for initializing its own state during its step.
-            # We only initialize the state specific to ADMM here.
+            # --- CRITICAL: Initialize base optimizer's state before ADMM's state ---
+            # This prevents ADMM's state from blocking the base optimizer's own lazy initialization,
+            # which often checks if the state dictionary is empty.
+            if isinstance(self, Adam) and 'exp_avg' not in st:
+                st["step"] = torch.tensor(0.0) if self.defaults.get('capturable', False) else 0.0
+                st["exp_avg"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+                st["exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+                if self.defaults.get("amsgrad", False):
+                    st["max_exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+            # elif isinstance(self, OtherOptimizer) and 'other_state' not in st:
+            #     # Add state initialization for other optimizers here
+            #     pass
 
             # --- Initialize ADMM's state ---
             st["dual"] = torch.zeros_like(p, dtype=self.dual_dtype, memory_format=torch.preserve_format)
@@ -777,7 +759,7 @@ class SAFE(torch.optim.Optimizer):
                                 comparison_group=self.comparison_group
                             )[0]
 
-                            u_new_i = duals[i].detach() + self.alpha * (weights[i].detach() - z_new_i) # U_t+1 = U_t + \alpha(W_t+1 - Z_t+1)
+                            u_new_i = duals[i].detach() + self.alpha * (weights[i].detach() - z_new_i) # U_t+1 = U_t + lpha(W_t+1 - Z_t+1)
                             
                             duals[i].copy_(u_new_i)
                             splits[i].copy_(z_new_i)
