@@ -138,7 +138,7 @@ def get_admm_optimizer(base_optimizer_cls):
             # This prevents ADMM's state from blocking the base optimizer's own lazy initialization,
             # which often checks if the state dictionary is empty.
             if isinstance(self, Adam) and 'exp_avg' not in st:
-                st["step"] = torch.tensor(0.0) if self.defaults.get('capturable', False) else 0.0
+                st["step"] = torch.tensor(0.0)
                 st["exp_avg"] = torch.zeros_like(p, memory_format=torch.preserve_format)
                 st["exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
                 if self.defaults.get("amsgrad", False):
