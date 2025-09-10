@@ -77,42 +77,54 @@ def main(argv):
         model.config.use_cache = False
 
     if FLAGS.sparsity_ratio != 0:
-        if FLAGS.prune_method != 'global_admm':
-            if local_rank == 0:
-                logging.info("pruning starts")
-                if FLAGS.prune_method == "wanda":
-                    prune_wanda(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
-                elif FLAGS.prune_method == "magnitude":
-                    prune_magnitude(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
-                elif FLAGS.prune_method == "sparsegpt":
-                    prune_sparsegpt(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
-                elif FLAGS.prune_method == "safe":
-                    prune_safe(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
-                elif FLAGS.prune_method == "alps":
-                    prune_alps(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
-                elif FLAGS.prune_method == 'dense':
-                    logging.info("No pruning applied, model remains dense.")
-        else:
+        logging.info("pruning starts")
+        is_local_pruning = FLAGS.prune_method != 'global_admm' and FLAGS.prune_method != 'dense'
+        
+        # --- Local Pruning on Main Process Only ---
+        if is_local_pruning and local_rank == 0:
+            if FLAGS.prune_method == "wanda":
+                prune_wanda(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+            elif FLAGS.prune_method == "magnitude":
+                prune_magnitude(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+            elif FLAGS.prune_method == "sparsegpt":
+                prune_sparsegpt(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+            elif FLAGS.prune_method == "safe":
+                prune_safe(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+            elif FLAGS.prune_method == "alps":
+                prune_alps(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+
+        # --- Global Pruning (Distributed) ---
+        elif FLAGS.prune_method == 'global_admm':
             globalprune_admm(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
-
-        ## TODO: need to check sparsity in local / global method
-        if is_distributed:
-            dist.barrier() # wait for main process to finish pruning
-            if FLAGS.prune_method != 'global_admm':
-                if local_rank == 0:
-                    state_dict = model.state_dict()
-                else:
-                    state_dict = None
-                
-                object_list = [state_dict]
-                torch.distributed.broadcast_object_list(object_list, src=0)
-                
-                if local_rank != 0:
-                    model.load_state_dict(object_list[0])
-
+        elif FLAGS.prune_method == 'dense':
+            logging.info("No pruning applied, model remains dense.")
+    # ## sparsity sanity check after pruning (per-device)
+    # logging.info("*"*30)
+    # sparsity_ratio = check_sparsity(model,log_by_block=True)
+    # logging.info(f"sparsity sanity check {sparsity_ratio:.4f}")
+    # logging.info("*"*30)
+    if is_local_pruning and is_distributed: ## broadcast
+        model = model.to(device) ## cpu -> gpu for nccl communication
+        if local_rank == 0:
+            logging.info("[rank0] broadcasting pruned weights/buffers")
+        with torch.no_grad():
+            for p in model.parameters():
+                if not p.is_cuda:
+                    p.data = p.data.to(device)
+                dist.broadcast(p.data, src=0)
+            for b in model.buffers():
+                if not b.is_cuda:
+                    b.data = b.data.to(device)
+                dist.broadcast(b.data, src=0)
+        dist.barrier()
     if local_rank == 0:
-        logging.info("Pruning finished")
-
+        logging.info("Pruning and synchronization finished")
+    ### sparsity sanity check after broadcasting
+    logging.info("*"*30)
+    sparsity_ratio = check_sparsity(model,log_by_block=True)
+    logging.info(f"sparsity sanity check {sparsity_ratio:.4f}")
+    logging.info("*"*30)
+    ##TODO: check whether global_admm is compatible with retrain.
     if FLAGS.do_retrain:
         if FLAGS.retrain_dataset is None:
             FLAGS.retrain_dataset = FLAGS.dataset
@@ -122,15 +134,13 @@ def main(argv):
         if local_rank == 0:
             logging.info("--- Retraining Finished ---")
 
-        if is_distributed:
-            dist.barrier()
-            state_dict_options = StateDictOptions(full_state_dict=True, cpu_offload=True)
-            full_state = get_model_state_dict(model, options=state_dict_options)
-            if local_rank == 0:
-                model = get_llm(FLAGS.model, FLAGS.seqlen)
-                model.load_state_dict(full_state)
-
     if is_distributed:
+        dist.barrier()
+        state_dict_options = StateDictOptions(full_state_dict=True, cpu_offload=True)
+        full_state = get_model_state_dict(model, options=state_dict_options)
+        if local_rank == 0:
+            model = get_llm(FLAGS.model, FLAGS.seqlen)
+            model.load_state_dict(full_state)
         dist.destroy_process_group()
 
     if local_rank == 0:

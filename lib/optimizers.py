@@ -577,16 +577,14 @@ class MaskedAdam(torch.optim.Adam):
 
     @torch.no_grad()
     def step(self, closure=None):
-        """
-        Performs a single optimization step and then re-applies the sparsity mask.
-        """
-        super().step(closure)
-        
+        ## apply mask before step
         for group in self.param_groups:
             for p in group['params']:
                 self._lazy_init_mask(p)
                 if 'mask' in self.state[p]:
                     p.data.mul_(self.state[p]['mask'])
+
+        super().step(closure)
 
 
 
