@@ -582,8 +582,10 @@ class MaskedAdam(torch.optim.Adam):
             for p in group['params']:
                 self._lazy_init_mask(p)
                 if 'mask' in self.state[p]:
-                    p.data.mul_(self.state[p]['mask'])
-
+                    p.data.mul_(self.state[p]['mask']) ## param masking
+                    if p.grad is not None:
+                        p.grad.data.mul_(self.state[p]['mask']) ## grad masking
+        dist.breakpoint()
         super().step(closure)
 
 
