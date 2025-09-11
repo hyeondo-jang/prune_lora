@@ -6,7 +6,6 @@ import math
 from torch.distributed.tensor import DTensor, Replicate, distribute_tensor, Shard
 import torch.distributed as dist
 from typing import Optional, List, Tuple, Literal
-from __future__ import annotations
 import enum
 from dataclasses import dataclass
 
@@ -654,7 +653,7 @@ class FP8Config:
     def torch_dtype(self) -> torch.dtype:
         if self.fp8_dtype == "float8_e4m3fn":
             return torch.float8_e4m3fn
-        elif self.fp8_dtype == "e5m2":
+        elif self.fp8_dtype == "float8_e5m2":
             return torch.float8_e5m2
         else:
             raise ValueError(f"Unsupported fp8 dtype: {self.fp8_dtype}")
@@ -810,23 +809,3 @@ class FP8State:
             sat = float((row / (self.scale * self.vmax + self.eps)).clamp(max=1.0).mean().item())
         return sat
 
-
-
-
-# ------------------------------
-# Integration sketch with ADMM update loop
-# ------------------------------
-# Example usage in your optimizer/trainer:
-#
-#   fp8 = FP8State.from_like(w, fp8_dtype="e4m3fn", granularity="tensorwise",
-#                            scaling_type=ScalingType.DELAYED, ema_decay=0.99,
-#                            safety_margin=1.05, sync_scales=True,
-#                            process_group=fsdp_pg)  # fsdp_pg optional
-#
-#   for step in range(T):
-#       z, u = fp8.get_fp32()      # FP32 working copies
-#       # ... compute z_new, u_new in FP32 ...
-#       fp8.requant(z_new, u_new)  # store back in FP8
-#
-# In FSDP2: call fp8.requant(...) on each rank; if sync_scales=True the scales are
-# max-reduced across ranks so that checkpoint reload is consistent.
