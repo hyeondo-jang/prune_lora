@@ -338,16 +338,14 @@ def get_admm_optimizer(base_optimizer_cls):
 
                 for w in weights:
                     st = self.state[w]
-                    dual  = st["dual"]
-                    split = st["split"]
                     initial_split = st["initial_split"]
                     spars = st["sparsity"]
                     current_lmda = st["lmda"]
                     previous_lmda = st["prev_lmda"]
 
                     ## for fp8 states, upcast to fp32 for computation
-                    dual = dual.dequant() if isinstance(dual, FP8State) else dual
-                    split = split.dequant() if isinstance(split, FP8State) else split
+                    dual = st["dual"].dequant() if isinstance(st["dual"], FP8State) else st["dual"]
+                    split = st["split"].dequant() if isinstance(st["split"], FP8State) else st["split"]
 
                     if current_lmda != previous_lmda:
                         dual.mul_(previous_lmda / current_lmda)
@@ -488,8 +486,8 @@ def get_admm_optimizer(base_optimizer_cls):
                     numel_sum += numel_local
 
                     ## for fp8 states, requantize to save fp8 states
-                    st['dual'] = st['dual'].requant(u_new) if isinstance(st['dual'], FP8State) else dual.copy_(u_new)
-                    st['split'] = st['split'].requant(z_new) if isinstance(st['split'], FP8State) else split.copy_(z_new)
+                    st['dual'].requant(u_new) if isinstance(st['dual'], FP8State) else dual.copy_(u_new)
+                    st['split'].requant(z_new) if isinstance(st['split'], FP8State) else split.copy_(z_new)
                     
                     st["lmda"] = new_lmda_for_param
                     st["prev_lmda"] = current_lmda
