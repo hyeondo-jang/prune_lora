@@ -486,11 +486,9 @@ def get_admm_optimizer(base_optimizer_cls):
                     flip_sum_initial += flip_local_initial
                     numel_sum += numel_local
 
-                    dual.copy_(u_new)
-                    split.copy_(z_new)
                     ## for fp8 states, requantize to save fp8 states
-                    st['dual'] = dual.requant() if isinstance(dual, FP8State) else dual
-                    st['split'] = split.requant() if isinstance(split, FP8State) else split
+                    st['dual'] = dual.requant(u_new) if isinstance(dual, FP8State) else dual.copy_(u_new)
+                    st['split'] = split.requant(z_new) if isinstance(split, FP8State) else split.copy(z_new)
                     
                     st["lmda"] = new_lmda_for_param
                     st["prev_lmda"] = current_lmda
