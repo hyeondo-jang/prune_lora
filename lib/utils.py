@@ -5,7 +5,11 @@ from transformers import AutoModelForCausalLM, EvalPrediction
 import math
 from torch.distributed.tensor import DTensor, Replicate, distribute_tensor, Shard
 import torch.distributed as dist
-from typing import Optional, List
+from typing import Optional, List, Tuple, Literal
+from __future__ import annotations
+import enum
+from dataclasses import dataclass
+
 def get_llm(
     model_name:str, 
     seqlen:int=2048
@@ -163,103 +167,7 @@ def projection(
             
     return out
 
-# def projection(
-#     w: list[torch.Tensor],
-#     sparsity: float,
-#     prune_n: int =0,
-#     prune_m: int = 0,
-#     importance_matrix: list[torch.Tensor] = None,
-#     comparison_group: str = 'layer'
-# ) -> list[torch.Tensor]:
-#     """
-#     Args:
-#         w (list[torch.Tensor]): list of weights (nxm) to be projected
-#         sparsity (float): target sparsity
-#         prune_n (int): n for n:m semi-structured sparsity
-#         prune_m (int): m for n:m semi-structured sparsity
-#         importance_matrix (list[torch.Tensor], optional): importance matrix (diag(mxm)) or vector (1xm) for each weight
-#         comparison_group (str): 'layer' for layer-wise pruning metric comparison, 'column' for column-wise(input), 'row' for row-wise(output) pruning metric comparison.
-#     Returns:
-#         new_zs (list[torch.Tensor]): list of projected weights
-#     """
-#     new_zs = []
-#     if importance_matrix is not None: # Generalized projection, SAFE+
-#         for weight,a in zip(w,importance_matrix):
-#             new_z = weight.data.clone().detach()
-#             z_metric = torch.abs(weight) * a
-#             if prune_n != 0: # n:m semi-structured sparsity
-#                 z_mask = (torch.zeros_like(new_z)==1)
-#                 for ii in range(z_metric.shape[1]):
-#                     if ii % prune_m == 0:
-#                         tmp = z_metric[:,ii:(ii+prune_m)].float()
-#                         z_mask.scatter_(1,ii+torch.topk(tmp, prune_n,dim=1, largest=False)[1], True)
-#             else: # unstructured sparsity
-#                 z_mask = (torch.zeros_like(new_z)==1)
-#                 if comparison_group == 'layer':
-#                     thresh = torch.sort(z_metric.flatten().cuda())[0][int(new_z.numel()*sparsity)].cpu()                
-#                     z_mask = (z_metric<=thresh)
-#                 elif comparison_group == 'column':
-#                     num_rows_to_prune_per_col = int(new_z.shape[0]*sparsity)
-#                     if num_rows_to_prune_per_col > 0:
-#                         _, indices_to_prune = torch.topk(
-#                             z_metric,
-#                             k=num_rows_to_prune_per_col,
-#                             dim=0,
-#                             largest=False
-#                         )
-#                     z_mask.scatter_(0,indices_to_prune, True)
-#                 elif comparison_group == 'row':
-#                     num_cols_to_prune_per_row = int(new_z.shape[1]*sparsity)
-#                     if num_cols_to_prune_per_row > 0:
-#                         _, indices_to_prune = torch.topk(
-#                             z_metric,
-#                             k=num_cols_to_prune_per_row,
-#                             dim=1,
-#                             largest=False
-#                         )
-#                     z_mask.scatter_(1,indices_to_prune, True)
-#             new_z[z_mask] = 0
-            
-#             new_zs.append(new_z)
-#     else: # Standard projection, SAFE
-#         for weight in w:
-#             new_z = weight.data.clone().detach()
-#             z_metric = torch.abs(weight)
-#             if prune_n != 0: # n:m semi-structured sparsity
-#                 z_mask = (torch.zeros_like(new_z)==1)
-#                 for ii in range(z_metric.shape[1]):
-#                     if ii % prune_m == 0:
-#                         tmp = z_metric[:,ii:(ii+prune_m)].float()
-#                         z_mask.scatter_(1,ii+torch.topk(tmp, prune_n,dim=1, largest=False)[1], True)
-#             else: # unstructured sparsity
-#                 z_mask = (torch.zeros_like(new_z)==1)
-#                 if comparison_group == 'layer':
-#                     thresh = torch.sort(z_metric.flatten().cuda())[0][int(new_z.numel()*sparsity)].cpu()                
-#                     z_mask = (z_metric<=thresh)
-#                 elif comparison_group == 'column':
-#                     num_rows_to_prune_per_col = int(new_z.shape[1]*sparsity)
-#                     if num_rows_to_prune_per_col > 0:
-#                         _, indices_to_prune = torch.topk(
-#                             z_metric,
-#                             k=num_rows_to_prune_per_col,
-#                             dim=1,
-#                             largest=False
-#                         )
-#                     z_mask.scatter_(1,indices_to_prune, True)
-#                 elif comparison_group == 'row':
-#                     num_cols_to_prune_per_row = int(new_z.shape[0]*sparsity)
-#                     if num_cols_to_prune_per_row > 0:
-#                         _, indices_to_prune = torch.topk(
-#                             z_metric,
-#                             k=num_cols_to_prune_per_row,
-#                             dim=0,
-#                             largest=False
-#                         )
-#                     z_mask.scatter_(0,indices_to_prune, True)
-#             new_z[z_mask] = 0
-#             new_zs.append(new_z)
-#     return new_zs
- 
+
 def find_layers(
     module: nn.Module,
     layers: list = [nn.Linear],
@@ -716,3 +624,209 @@ def export_memory_snapshot(prune_method: str = "magnitude") -> None:
    except Exception as e:
        logger.error(f"Failed to capture memory snapshot {e}")
        return
+
+
+
+# NOTE:
+# - This implementation is designed for the pattern: "store z/u in FP8, compute in FP32".
+# - No GEMM kernels are used; this is a light-weight storage wrapper intentionally.
+# - It is FSDP2-aware via optional scale synchronization across ranks (all-reduce max).
+# - Matches torchao.float8 ScalingType semantics (dynamic / none).
+
+FP8DType = Literal["float8_e4m3fn", "float8_e5m2"]
+Granularity = Literal["tensorwise", "rowwise"]
+
+
+class ScalingType(enum.Enum):
+    DYNAMIC = 0   # use current step's range (torchao: dynamic)
+    NONE = 1      # do not update scales automatically
+
+
+@dataclass
+class FP8Config:
+    fp8_dtype: FP8DType = "float8_e4m3fn"
+    scaling_type: ScalingType = ScalingType.DYNAMIC  # torchao: dynamic/none
+    granularity: Granularity = "tensorwise"
+    safety_margin: float = 1.05
+    sync_scales: bool = True
+    process_group: Optional[dist.ProcessGroup] = None
+
+    def torch_dtype(self) -> torch.dtype:
+        if self.fp8_dtype == "float8_e4m3fn":
+            return torch.float8_e4m3fn
+        elif self.fp8_dtype == "e5m2":
+            return torch.float8_e5m2
+        else:
+            raise ValueError(f"Unsupported fp8 dtype: {self.fp8_dtype}")
+
+
+class FP8State:
+    """
+    FP8 storage wrapper for a *single* tensor (e.g., ADMM's z or u).
+
+    - Storage: one FP8 tensor + FP32 scale(s) (tensorwise or rowwise).
+    - Compute: Always upcast to FP32 on demand; caller performs math.
+    - FSDP2-aware: (optional) synchronize scale across ranks (max).
+    """
+
+    def __init__(self, ref: torch.Tensor, cfg: Optional[FP8Config] = None):
+        if cfg is None:
+            cfg = FP8Config()
+        self.cfg = cfg
+        self.device = ref.device
+        self.shape = tuple(ref.shape)
+        self.ndim = ref.ndim
+        self.fp8_dtype = cfg.torch_dtype()
+        self._init_storage()
+        self._init_vmax()
+
+    # ------------------------------
+    # Constructors
+    # ------------------------------
+    @classmethod
+    def from_like(cls, ref: torch.Tensor, **kwargs) -> "FP8State":
+        """Create an empty FP8State with buffers shaped like `ref`."""
+        return cls(ref, FP8Config(**kwargs))
+
+    @classmethod
+    @torch.no_grad()
+    def from_tensor(cls, x: torch.Tensor, **kwargs) -> "FP8State":
+        """Create FP8State and immediately quantize `x` into storage."""
+        st = cls(x, FP8Config(**kwargs))
+        st.requant(x.to(torch.float32))
+        return st
+
+    # ------------------------------
+    # Internal inits
+    # ------------------------------
+    def _init_storage(self) -> None:
+        self.data_fp8 = torch.zeros(self.shape, dtype=self.fp8_dtype, device=self.device)
+        if self.cfg.granularity == "tensorwise":
+            self.scale = torch.ones((), dtype=torch.float32, device=self.device)
+        elif self.cfg.granularity == "rowwise":
+            assert self.ndim >= 2, "rowwise granularity requires tensor with at least 2 dims"
+            rows = self.shape[-2]
+            self.scale = torch.ones((rows,), dtype=torch.float32, device=self.device)
+        else:
+            raise ValueError(f"Unsupported granularity: {self.cfg.granularity}")
+
+    def _init_vmax(self) -> None:
+        finfo = torch.finfo(self.fp8_dtype)
+        self.vmax = torch.tensor(finfo.max, dtype=torch.float32, device=self.device)
+        self.eps = torch.tensor(1e-12, dtype=torch.float32, device=self.device)
+
+    # ------------------------------
+    # Public API
+    # ------------------------------
+    @torch.no_grad()
+    def dequant(self) -> torch.Tensor:
+        """Return FP32 view of stored FP8 data using current scale(s)."""
+        if self.cfg.granularity == "tensorwise":
+            return self.data_fp8.to(torch.float32) * self.scale
+        else:
+            assert self.ndim >= 2
+            shape = [1] * (self.ndim - 2) + [self.scale.numel(), 1]
+            return self.data_fp8.to(torch.float32) * self.scale.view(*shape)
+
+    @torch.no_grad()
+    def get_fp32(self) -> torch.Tensor:
+        """Alias for dequant() (kept for readability)."""
+        return self.dequant()
+
+    @torch.no_grad()
+    def requant(self, x_new: torch.Tensor) -> None:
+        """Quantize-and-store updated tensor using updated scale(s)."""
+        self._update_scale_(x_new)
+        if self.cfg.sync_scales and dist.is_available() and dist.is_initialized():
+            self._sync_scale_()
+        if self.cfg.granularity == "tensorwise":
+            self.data_fp8.copy_((x_new / (self.scale + self.eps)).to(self.fp8_dtype))
+        else:
+            shape = [1] * (x_new.ndim - 2) + [self.scale.numel(), 1]
+            self.data_fp8.copy_((x_new / (self.scale.view(*shape) + self.eps)).to(self.fp8_dtype))
+
+    # ------------------------------
+    # Scale updates & synchronization
+    # ------------------------------
+    @torch.no_grad()
+    def _update_scale_(self, x: torch.Tensor) -> None:
+        if self.cfg.scaling_type == ScalingType.NONE:
+            return
+        margin = self.cfg.safety_margin
+        if self.cfg.granularity == "tensorwise":
+            maxabs = x.abs().max().to(torch.float32)
+            target = (maxabs / self.vmax) * margin
+        else:
+            *_, R, C = x.shape
+            xr = x.reshape(-1, R, C).abs().amax(dim=(0, 2)).to(torch.float32)
+            target = (xr / self.vmax) * margin
+        new_scale = torch.clamp(target, min=1e-8)
+        self.scale.copy_(new_scale)
+
+    @torch.no_grad()
+    def _sync_scale_(self) -> None:
+        pg = self.cfg.process_group if self.cfg.process_group is not None else dist.group.WORLD
+        dist.all_reduce(self.scale, op=dist.ReduceOp.MAX, group=pg)
+
+    # ------------------------------
+    # Checkpointing & stats
+    # ------------------------------
+    @torch.no_grad()
+    def state_dict(self) -> dict:
+        return {
+            "cfg": {
+                "fp8_dtype": self.cfg.fp8_dtype,
+                "scaling_type": self.cfg.scaling_type.value,
+                "granularity": self.cfg.granularity,
+                "safety_margin": self.cfg.safety_margin,
+                "sync_scales": self.cfg.sync_scales,
+            },
+            "data_fp8": self.data_fp8,
+            "scale": self.scale,
+        }
+
+    @torch.no_grad()
+    def load_state_dict(self, sd: dict) -> None:
+        cfg = sd.get("cfg", {})
+        self.cfg.fp8_dtype = cfg.get("fp8_dtype", self.cfg.fp8_dtype)
+        self.fp8_dtype = FP8Config(fp8_dtype=self.cfg.fp8_dtype).torch_dtype()
+        st = cfg.get("scaling_type", self.cfg.scaling_type.value)
+        self.cfg.scaling_type = ScalingType(st)
+        self.cfg.granularity = cfg.get("granularity", self.cfg.granularity)
+        self.cfg.safety_margin = float(cfg.get("safety_margin", self.cfg.safety_margin))
+        self.cfg.sync_scales = bool(cfg.get("sync_scales", self.cfg.sync_scales))
+
+        self.data_fp8.copy_(sd["data_fp8"].to(self.fp8_dtype).to(self.device))
+        self.scale.copy_(sd["scale"].to(torch.float32).to(self.device))
+
+    @torch.no_grad()
+    def saturation_ratio(self) -> float:
+        x = self.dequant()
+        if self.cfg.granularity == "tensorwise":
+            sat = float((x.abs().amax() / (self.scale * self.vmax + self.eps)).clamp(max=1.0).item())
+        else:
+            *_, R, C = x.shape
+            row = x.reshape(-1, R, C).abs().amax(dim=(0, 2))
+            sat = float((row / (self.scale * self.vmax + self.eps)).clamp(max=1.0).mean().item())
+        return sat
+
+
+
+
+# ------------------------------
+# Integration sketch with ADMM update loop
+# ------------------------------
+# Example usage in your optimizer/trainer:
+#
+#   fp8 = FP8State.from_like(w, fp8_dtype="e4m3fn", granularity="tensorwise",
+#                            scaling_type=ScalingType.DELAYED, ema_decay=0.99,
+#                            safety_margin=1.05, sync_scales=True,
+#                            process_group=fsdp_pg)  # fsdp_pg optional
+#
+#   for step in range(T):
+#       z, u = fp8.get_fp32()      # FP32 working copies
+#       # ... compute z_new, u_new in FP32 ...
+#       fp8.requant(z_new, u_new)  # store back in FP8
+#
+# In FSDP2: call fp8.requant(...) on each rank; if sync_scales=True the scales are
+# max-reduced across ranks so that checkpoint reload is consistent.

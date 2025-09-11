@@ -15,7 +15,7 @@ from torch.optim.optimizer import _get_scalar_dtype, _device_dtype_check_for_fus
 from torchao.optim import Adam8bit,Adam4bit
 # from adam_mini import AdamMini # Example for Adam-Mini
 # from torch.optim import Muon # Example for Muon (in future PyTorch versions)
-
+from .utils import FP8Config, FP8State, FP8DType, ScalingType
 
 def _is_dtensor(x): 
     return hasattr(x, "to_local")
@@ -114,6 +114,8 @@ def get_admm_optimizer(base_optimizer_cls):
                 self.dual_dtype = torch.bfloat16
             elif dual_dtype == 'fp32':
                 self.dual_dtype = torch.float32
+            elif dual_dtype in ('float8_e4m3fn', 'float8_e5m2'):
+                pass ## this init is handled with utils.FP8DType
             else:
                 raise ValueError(f"Unsupported dual_dtype: {dual_dtype}")
 
@@ -121,6 +123,8 @@ def get_admm_optimizer(base_optimizer_cls):
                 self.split_dtype = torch.bfloat16
             elif split_dtype == 'fp32':
                 self.split_dtype = torch.float32
+            elif split_dtype in ('float8_e4m3fn', 'float8_e5m2'):
+                pass ## this init is handled with utils.FP8DType
             else:
                 raise ValueError(f"Unsupported split_dtype: {split_dtype}")
 
@@ -133,6 +137,7 @@ def get_admm_optimizer(base_optimizer_cls):
 
             # Runtime helpers
             self.accelerator = accelerator
+            self.process_group = getattr(accelerator, "process_group", None) if accelerator is not None else None
             self.current_step = 0
             self.mask_metrics = {'step_hamming': 0.0, 'initial_hamming': 0.0, 'step_iou': 0.0, 'initial_iou': 0.0}
 
@@ -184,7 +189,14 @@ def get_admm_optimizer(base_optimizer_cls):
                 return
 
             # --- Initialize ADMM's state ---
-            st["dual"] = torch.zeros_like(p, dtype=self.dual_dtype, memory_format=torch.preserve_format)
+            if self.dual_dtype in ('float8_e4m3fn', 'float8_e5m2'):
+                st["dual"] = FP8State.from_like(
+                    p, fp8_dtype=self.dual_dtype, granularity="tensorwise",
+                    scaling_type=ScalingType.DYNAMIC, safety_margin=1.05,
+                    sync_scales=True, process_group=self.process_group
+                )
+            else:
+                st["dual"] = torch.zeros_like(p, dtype=self.dual_dtype, memory_format=torch.preserve_format)
             st["sparsity"] = self.sparsity
 
             # Optional importance buffer
@@ -206,7 +218,14 @@ def get_admm_optimizer(base_optimizer_cls):
                 st["lmda"] = self.lmda_default
                 st['prev_lmda'] = self.lmda_default
 
-            st["split"] = z0.detach().clone().to(device=p.device, dtype=self.split_dtype)
+            if self.split_dtype in ('float8_e4m3fn', 'float8_e5m2'):
+                st["split"] = FP8State.from_tensor(
+                    z0, fp8_dtype=self.split_dtype, granularity="tensorwise",
+                    scaling_type=ScalingType.DYNAMIC, safety_margin=1.05,
+                    sync_scales=True, process_group=self.process_group
+                )
+            else:
+                st["split"] = z0.detach().clone().to(device=p.device, dtype=self.split_dtype)
             st["initial_split"] = z0.detach().ne(0).clone().to(device=p.device)
 
             # Gradient snapshot
@@ -241,6 +260,10 @@ def get_admm_optimizer(base_optimizer_cls):
                     self._lazy_init_admm_state(w, g)
                     st = self.state[w]
                     dual, split = st["dual"], st["split"]
+                    if isinstance(dual, FP8State):
+                        dual = dual.dequant()
+                    if isinstance(split, FP8State):
+                        split = split.dequant()
                     lmda = st["lmda"] # Use per-parameter lmda
                 
                     # Proximal term: λ (w - z + u)
@@ -279,7 +302,13 @@ def get_admm_optimizer(base_optimizer_cls):
                                 st["last_grad_for_importance"] = (_loc(w.grad).detach().clone()
                                                                   if hasattr(w.grad, "to_local")
                                                                   else w.grad.detach().clone())
-
+                    
+                    if isinstance(dual, FP8State):
+                        dual = dual.quant()
+                        st["dual"] = dual
+                    if isinstance(split, FP8State):
+                        split = split.quant()
+                        st["split"] = split
         @torch.no_grad()
         def _dual_update(self):
             """
