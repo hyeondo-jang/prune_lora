@@ -5,7 +5,7 @@ from transformers import AutoModelForCausalLM, EvalPrediction
 import math
 from torch.distributed.tensor import DTensor, Replicate, distribute_tensor, Shard
 import torch.distributed as dist
-from typing import Optional, List, Tuple, Literal
+from typing import Optional, List, Tuple, Literal, Union
 import enum
 from dataclasses import dataclass
 
@@ -632,7 +632,6 @@ def export_memory_snapshot(prune_method: str = "magnitude") -> None:
 # - It is FSDP2-aware via optional scale synchronization across ranks (all-reduce max).
 # - Matches torchao.float8 ScalingType semantics (dynamic / none).
 
-FP8DType = Literal["float8_e4m3fn", "float8_e5m2"]
 Granularity = Literal["tensorwise", "rowwise"]
 
 
@@ -643,7 +642,7 @@ class ScalingType(enum.Enum):
 
 @dataclass
 class FP8Config:
-    fp8_dtype: FP8DType = "float8_e4m3fn"
+    fp8_dtype: torch.dtype = torch.float8_e4m3fn  # torchao: float8_e4m3fn/float8_e5m2
     scaling_type: ScalingType = ScalingType.DYNAMIC  # torchao: dynamic/none
     granularity: Granularity = "tensorwise"
     safety_margin: float = 1.05
@@ -651,9 +650,9 @@ class FP8Config:
     process_group: Optional[dist.ProcessGroup] = None
 
     def torch_dtype(self) -> torch.dtype:
-        if self.fp8_dtype == "float8_e4m3fn":
+        if self.fp8_dtype == torch.float8_e4m3fn:
             return torch.float8_e4m3fn
-        elif self.fp8_dtype == "float8_e5m2":
+        elif self.fp8_dtype == torch.float8_e5m2:
             return torch.float8_e5m2
         else:
             raise ValueError(f"Unsupported fp8 dtype: {self.fp8_dtype}")

@@ -7,7 +7,7 @@ import wandb
 import contextlib
 import inspect
 import functools
-
+from .utils import FP8State
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -1037,6 +1037,8 @@ class ADMMTrainer(Trainer):
                         state = unwrapped_optimizer.state[param]
                         w = self._loc(param)
                         z = self._loc(state['split'])
+                        if isinstance(z,FP8State):
+                            z = z.get_fp32()
                         local_primal_residual_sq += torch.sum((w - z) ** 2)
                         local_weight_norm_sq += torch.sum(w ** 2)
             
@@ -1077,6 +1079,10 @@ class ADMMTrainer(Trainer):
                         w = self._loc(param)
                         u = self._loc(state['dual'])
                         z = self._loc(state['split'])
+                        if isinstance(z,FP8State):
+                            z = z.get_fp32()
+                        if isinstance(u,FP8State):
+                            u = u.get_fp32()
                         p_sparsity = state.get('sparsity', unwrapped_optimizer.sparsity)
                         current_param_lmda = state['lmda'] # Get the per-parameter lmda
                         

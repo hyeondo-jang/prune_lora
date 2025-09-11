@@ -15,7 +15,7 @@ from torch.optim.optimizer import _get_scalar_dtype, _device_dtype_check_for_fus
 from torchao.optim import Adam8bit,Adam4bit
 # from adam_mini import AdamMini # Example for Adam-Mini
 # from torch.optim import Muon # Example for Muon (in future PyTorch versions)
-from .utils import FP8Config, FP8State, FP8DType, ScalingType
+from .utils import FP8Config, FP8State, ScalingType
 
 def _is_dtensor(x): 
     return hasattr(x, "to_local")
@@ -114,8 +114,10 @@ def get_admm_optimizer(base_optimizer_cls):
                 self.dual_dtype = torch.bfloat16
             elif dual_dtype == 'fp32':
                 self.dual_dtype = torch.float32
-            elif dual_dtype in ('float8_e4m3fn', 'float8_e5m2'):
-                pass ## this init is handled with utils.FP8DType
+            elif dual_dtype == 'float8_e5m2':
+                self.dual_dtype = torch.float8_e5m2
+            elif dual_dtype == 'float8_e4m3fn':
+                self.dual_dtype = torch.float8_e4m3fn
             else:
                 raise ValueError(f"Unsupported dual_dtype: {dual_dtype}")
 
@@ -123,8 +125,10 @@ def get_admm_optimizer(base_optimizer_cls):
                 self.split_dtype = torch.bfloat16
             elif split_dtype == 'fp32':
                 self.split_dtype = torch.float32
-            elif split_dtype in ('float8_e4m3fn', 'float8_e5m2'):
-                pass ## this init is handled with utils.FP8DType
+            elif split_dtype == 'float8_e5m2':
+                self.split_dtype = torch.float8_e5m2
+            elif split_dtype == 'float8_e4m3fn':
+                self.split_dtype = torch.float8_e4m3fn
             else:
                 raise ValueError(f"Unsupported split_dtype: {split_dtype}")
 
@@ -189,9 +193,9 @@ def get_admm_optimizer(base_optimizer_cls):
                 return
 
             # --- Initialize ADMM's state ---
-            if self.dual_dtype in ('float8_e4m3fn', 'float8_e5m2'):
-                st["dual"] = FP8State.from_like(
-                    p, fp8_dtype=self.dual_dtype, granularity="tensorwise",
+            if self.dual_dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
+                st["dual"] = FP8State.from_tensor(
+                    torch.zeros_like(p), fp8_dtype=self.dual_dtype, granularity="tensorwise",
                     scaling_type=ScalingType.DYNAMIC, safety_margin=1.05,
                     sync_scales=True, process_group=self.process_group
                 )
@@ -218,7 +222,7 @@ def get_admm_optimizer(base_optimizer_cls):
                 st["lmda"] = self.lmda_default
                 st['prev_lmda'] = self.lmda_default
 
-            if self.split_dtype in ('float8_e4m3fn', 'float8_e5m2'):
+            if self.split_dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
                 st["split"] = FP8State.from_tensor(
                     z0, fp8_dtype=self.split_dtype, granularity="tensorwise",
                     scaling_type=ScalingType.DYNAMIC, safety_margin=1.05,
@@ -301,9 +305,6 @@ def get_admm_optimizer(base_optimizer_cls):
                                 st["last_grad_for_importance"] = (_loc(w.grad).detach().clone()
                                                                   if hasattr(w.grad, "to_local")
                                                                   else w.grad.detach().clone())
-                    # Re-quantize to save fp8 states
-                    st['dual'] = dual.requant() if isinstance(dual, FP8State) else dual
-                    st['split'] = split.requant() if isinstance(split, FP8State) else split
         @torch.no_grad()
         def _dual_update(self):
             """
@@ -487,8 +488,8 @@ def get_admm_optimizer(base_optimizer_cls):
                     numel_sum += numel_local
 
                     ## for fp8 states, requantize to save fp8 states
-                    st['dual'] = dual.requant(u_new) if isinstance(dual, FP8State) else dual.copy_(u_new)
-                    st['split'] = split.requant(z_new) if isinstance(split, FP8State) else split.copy(z_new)
+                    st['dual'] = st['dual'].requant(u_new) if isinstance(st['dual'], FP8State) else dual.copy_(u_new)
+                    st['split'] = st['split'].requant(z_new) if isinstance(st['split'], FP8State) else split.copy_(z_new)
                     
                     st["lmda"] = new_lmda_for_param
                     st["prev_lmda"] = current_lmda
