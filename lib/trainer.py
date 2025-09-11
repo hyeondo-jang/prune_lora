@@ -514,6 +514,7 @@ class ADMMTrainer(Trainer):
                     projection_bias_correction=self.args.admm_projection_bias_correction,
                     importance_ema=self.args.admm_importance_ema,
                     decouple=self.args.decouple_admm,
+                    dual_dtype=self.args.admm_dual_dtype,
                     split_dtype=self.args.admm_split_dtype,
                     accelerator=self.accelerator,
                     normalize_prox_grad=self.args.normalize_prox_grad,
