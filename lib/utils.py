@@ -675,7 +675,8 @@ class FP8State:
         self.shape = tuple(ref.shape)
         self.ndim = ref.ndim
         self.fp8_dtype = cfg.torch_dtype()
-        self._init_storage()
+        self._is_dtensor = isinstance(ref, DTensor)
+        self._init_storage(ref)
         self._init_vmax()
 
     # ------------------------------
@@ -697,8 +698,11 @@ class FP8State:
     # ------------------------------
     # Internal inits
     # ------------------------------
-    def _init_storage(self) -> None:
-        self.data_fp8 = torch.zeros(self.shape, dtype=self.fp8_dtype, device=self.device)
+    def _init_storage(self, ref: torch.Tensor) -> None:
+        if self._is_dtensor:
+            self.data_fp8 = torch.zeros_like(ref, dtype=self.fp8_dtype)
+        else:
+            self.data_fp8 = torch.zeros(self.shape, dtype=self.fp8_dtype, device=self.device)
         if self.cfg.granularity == "tensorwise":
             self.scale = torch.ones((), dtype=torch.float32, device=self.device)
         elif self.cfg.granularity == "rowwise":
@@ -807,4 +811,3 @@ class FP8State:
             row = x.reshape(-1, R, C).abs().amax(dim=(0, 2))
             sat = float((row / (self.scale * self.vmax + self.eps)).clamp(max=1.0).mean().item())
         return sat
-
