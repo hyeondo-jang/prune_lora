@@ -278,7 +278,6 @@ def get_admm_optimizer(base_optimizer_cls):
                 for w in weights:
                     self._lazy_init_admm_state(w, g)
                     st = self.state[w]
-
                     dual  = st["dual"]
                     split = st["split"]
                     initial_split = st["initial_split"]
