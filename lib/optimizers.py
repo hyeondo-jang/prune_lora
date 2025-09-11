@@ -10,8 +10,9 @@ from torch.distributed.tensor import DTensor, Replicate
 import math
 
 # Import base optimizers
-from torch.optim import Adam
-# from bitsandbytes.optim import Adam8bit # Example for 8-bit Adam
+from torch.optim import Adam, SGD
+from torch.optim.optimizer import _get_scalar_dtype, _device_dtype_check_for_fused
+from torchao.optim import Adam8bit,Adam4bit
 # from adam_mini import AdamMini # Example for Adam-Mini
 # from torch.optim import Muon # Example for Muon (in future PyTorch versions)
 
@@ -129,23 +130,47 @@ def get_admm_optimizer(base_optimizer_cls):
             Lazily initialize all required states for a parameter for both ADMM and the base optimizer.
             This must be called before the base optimizer's step if ADMM state is used before it,
             as it ensures the base optimizer's state is created before we add our own ADMM state.
+            For Adam8bit support, make sure to pass group, gindx, pindx to initialize Adam8bit state properly.
             """
             st = self.state[p]
-            if 'dual' in st:
+            if len(st) == 0: ## optimizer states for base optimizers 
+                if isinstance(self, Adam): ## lazy init of Adam state, official implementation.
+                    if group["fused"]:
+                        _device_dtype_check_for_fused(p)
+                    st["step"] = (
+                        torch.zeros(
+                            (),
+                            dtype=_get_scalar_dtype(is_fused=group["fused"]),
+                            device=p.device,
+                        )
+                        if group["capturable"] or group["fused"]
+                        else torch.tensor(0.0, dtype=_get_scalar_dtype())
+                    )
+                    # Exponential moving average of gradient values
+                    st["exp_avg"] = torch.zeros_like(
+                        p, memory_format=torch.preserve_format
+                    )
+                    # Exponential moving average of squared gradient values
+                    st["exp_avg_sq"] = torch.zeros_like(
+                        p, memory_format=torch.preserve_format
+                    )
+                    if group["amsgrad"]:
+                        # Maintains max of all exp. moving avg. of sq. grad. values
+                        st["max_exp_avg_sq"] = torch.zeros_like(
+                            p, memory_format=torch.preserve_format
+                        )
+                elif isinstance(self, (Adam4bit, Adam8bit)):
+                    st["step"] = torch.tensor(0.0)
+                    st["exp_avg"] = self._new_buffer(p, True)
+                    st["exp_avg_sq"] = self._new_buffer(p, False)
+                    if group["amsgrad"]:
+                        st["max_exp_avg_sq"] = self._new_buffer(p, False)
+                elif isinstance(self, SGD): ## sgd is stateless
+                    pass
+                else: 
+                    raise NotImplementedError("Base optimizer state initialization not implemented for this optimizer.")
+            if 'dual' in st: ## return if ADMM state is already initialized
                 return
-
-            # --- CRITICAL: Initialize base optimizer's state before ADMM's state ---
-            # This prevents ADMM's state from blocking the base optimizer's own lazy initialization,
-            # which often checks if the state dictionary is empty.
-            if isinstance(self, Adam) and 'exp_avg' not in st:
-                st["step"] = torch.tensor(0.0)
-                st["exp_avg"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                st["exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                if self.defaults.get("amsgrad", False):
-                    st["max_exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-            # elif isinstance(self, OtherOptimizer) and 'other_state' not in st:
-            #     # Add state initialization for other optimizers here
-            #     pass
 
             # --- Initialize ADMM's state ---
             st["dual"] = torch.zeros_like(p, dtype=self.dual_dtype, memory_format=torch.preserve_format)
@@ -276,7 +301,6 @@ def get_admm_optimizer(base_optimizer_cls):
                 numel_sum = torch.tensor(0, device=device, dtype=torch.int64)
 
                 for w in weights:
-                    self._lazy_init_admm_state(w, g)
                     st = self.state[w]
                     dual  = st["dual"]
                     split = st["split"]
@@ -306,7 +330,9 @@ def get_admm_optimizer(base_optimizer_cls):
                     elif self.projection_mode == "activation":
                         importance_i = st.get("importance", None)
                     elif self.projection_mode == "momentum":
-                        v_t = st.get("exp_avg_sq")
+                        v_t = st.get("exp_avg_sq",None)
+                        if v_t is None:
+                            raise ValueError("For momentum projection mode, optimizer must have 'exp_avg_sq' state (e.g., Adam).")
                         if self.projection_bias_correction:
                             beta2 = g.get('betas', (0.9, 0.95))[1]
                             importance_i = v_t / (1.0 - beta2**(st.get("step", 1)))
@@ -314,10 +340,12 @@ def get_admm_optimizer(base_optimizer_cls):
                             importance_i = v_t
                         
                     elif self.projection_mode == "taylor":
-                        m_t = st.get("exp_avg")
-                        v_t = st.get("exp_avg_sq")
+                        m_t = st.get("exp_avg",None)
+                        v_t = st.get("exp_avg_sq",None)
                         step = st.get("step", 1)
                         beta1, beta2 = g.get('betas', (0.9, 0.999))
+                        if m_t is None or v_t is None:
+                            raise ValueError("For taylor projection mode, optimizer must have 'exp_avg' and 'exp_avg_sq' states (e.g., Adam).")
                         
                         m_hat = m_t / (1.0 - beta1**step)
                         v_hat = v_t / (1.0 - beta2**step)
@@ -482,9 +510,6 @@ def get_admm_optimizer(base_optimizer_cls):
                 if not g.get("admm", False):
                     continue
                 for w in g["params"]:
-                    if w not in self.state or len(self.state[w]) == 0:
-                        self._lazy_init_admm_state(w, g)
-
                     st = self.state[w]
                     importance = None
                     is_direct_score = (self.projection_mode == 'taylor')
@@ -548,35 +573,6 @@ def get_admm_optimizer(base_optimizer_cls):
                 return {"avg_lmda": total_lmda / count, "min_lmda": min_lmda, "max_lmda": max_lmda}
 
     return ADMMOptimizer
-
-# --- Create ADMM optimizers using the factory ---
-
-# Default ADMM using torch.optim.Adam as the base.
-# This maintains backward compatibility with the previous implementation.
-ADMM = get_admm_optimizer(Adam)
-
-# Example: Create ADMM variants for other optimizers.
-# You would need to import these optimizers first and ensure they are compatible with FSDP2.
-#
-# try:
-#     from bitsandbytes.optim import Adam8bit
-#     ADMMAdam8bit = get_admm_optimizer(Adam8bit)
-# except ImportError:
-#     ADMMAdam8bit = None
-#
-# try:
-#     # Assuming a library named 'adam_mini' exists
-#     from adam_mini import AdamMini
-#     ADMMAdamMini = get_admm_optimizer(AdamMini)
-# except ImportError:
-#     ADMMAdamMini = None
-#
-# try:
-#     # Assuming Muon will be in torch.optim in a future version
-#     from torch.optim import Muon
-#     ADMMMuon = get_admm_optimizer(Muon)
-# except ImportError:
-#     ADMMMuon = None
 
 
 class MaskedAdam(torch.optim.Adam):

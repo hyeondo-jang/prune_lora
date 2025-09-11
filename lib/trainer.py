@@ -51,7 +51,7 @@ from transformers.utils import (
 from accelerate import Accelerator
 from accelerate.utils import InitProcessGroupKwargs
 
-from .optimizers import ADMM,SAFE, MaskedAdam
+from .optimizers import get_admm_optimizer,SAFE, MaskedAdam
 from .scheduler import PenaltyScheduler, SparsityScheduler
 from .utils import find_layers, projection
 
@@ -485,7 +485,7 @@ class ADMMTrainer(Trainer):
                 if self.is_world_process_zero():
                     print(f"Created param_names with {len(self.admm_param_names)} entries")
                     print(f"Sample param_names: {list(self.admm_param_names)[:3]}")
-
+                ADMM = get_admm_optimizer(self.args.admm_base_optimizer)
                 self.optimizer = ADMM(
                     param_groups,
                     projection_fn= projection,
