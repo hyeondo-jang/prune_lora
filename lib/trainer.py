@@ -462,10 +462,13 @@ class ADMMTrainer(Trainer):
                 logger.info(f'Found {len(admm_param_list)} / {len([p for p in opt_model.parameters()])} parameters for ADMM/SAFE.')
             
             # Base optimizer for ADMM (not for SAFE, as SAFE uses SAM which has its own base)
-            ## TODO: this needs to be fixed ()
-            base_optimizer_kwargs = {
+            if self.args.base_optimizer_type in ['adam', 'adam8bit','adam4bit']:
+                base_optimizer_kwargs = {
                     'betas': (self.args.admm_beta1, self.args.admm_beta2),
+                    'weight_decay': self.args.weight_decay
                 }
+            else: ## sgd
+                base_optimizer_kwargs = {}
     
             # Prepare kwargs for ADMM
 
@@ -485,7 +488,9 @@ class ADMMTrainer(Trainer):
                 if self.is_world_process_zero():
                     print(f"Created param_names with {len(self.admm_param_names)} entries")
                     print(f"Sample param_names: {list(self.admm_param_names)[:3]}")
-                ADMM = get_admm_optimizer(self.args.admm_base_optimizer)
+                ADMM = get_admm_optimizer(self.args.base_optimizer_type)
+                if self.is_world_process_zero():
+                    logger.info(f"Using base optimizer: {ADMM.__bases__[0].__name__}")
                 self.optimizer = ADMM(
                     param_groups,
                     projection_fn= projection,

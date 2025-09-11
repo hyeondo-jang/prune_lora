@@ -29,6 +29,17 @@ def get_admm_optimizer(base_optimizer_cls):
     Factory function to create an ADMM optimizer class that inherits from a base optimizer.
     This preserves the single-class structure required for FSDP compatibility.
     """
+    base_optimizer_cls = base_optimizer_cls.lower()
+    if base_optimizer_cls not in ['adam', 'adam8bit', 'adam4bit', 'sgd']:
+        raise ValueError("base_optimizer_cls must be one of 'adam', 'adam8bit', 'adam4bit', or 'sgd'.")
+    if base_optimizer_cls == 'adam':
+        base_optimizer_cls = Adam
+    elif base_optimizer_cls == 'adam8bit':
+        base_optimizer_cls = Adam8bit
+    elif base_optimizer_cls == 'adam4bit':
+        base_optimizer_cls = Adam4bit
+    elif base_optimizer_cls == 'sgd':
+        base_optimizer_cls = SGD
     class ADMMOptimizer(base_optimizer_cls):
         """
         ADMM optimizer built by subclassing a base optimizer (e.g., Adam).
