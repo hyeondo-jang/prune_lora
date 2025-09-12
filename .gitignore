@@ -7,3 +7,5 @@ __pycache__/
 /wandb/*
 dataset/
 /admm_*/*
+/memory/
+/plot_results/
