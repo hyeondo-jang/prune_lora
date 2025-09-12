@@ -84,21 +84,27 @@ def _process_and_tokenize(raw_dataset, dataset_name, tokenizer, nsamples, seqlen
         all_tokens.append(tokenizer(full_text, return_tensors='pt').input_ids)
 
     processed_samples = []
+    is_gemma_tokenizer = 'gemma' in tokenizer.__class__.__name__.lower()
     for _ in tqdm(range(nsamples), desc="Generating samples"):
         token_source = random.choice(all_tokens)
-        start_index = random.randint(0, token_source.shape[1] - seqlen - 1)
-        end_index = start_index + seqlen
+        
+        slice_len = seqlen - 1 if is_gemma_tokenizer else seqlen
+        
+        start_index = random.randint(0, token_source.shape[1] - slice_len - 1)
+        end_index = start_index + slice_len
         
         inp = token_source[:, start_index:end_index]
-        if 'gemma' in tokenizer.__class__.__name__.lower():
-            inp[:, 0] = tokenizer.bos_token_id
+
+        if is_gemma_tokenizer:
+            bos_tensor = torch.tensor([[tokenizer.bos_token_id]])
+            inp = torch.cat([bos_tensor, inp], dim=1)
         
         processed_samples.append({
             "input_ids": inp.squeeze(0).tolist(),
             "attention_mask": [1] * seqlen,
-            'labels': inp.squeeze(0).tolist()  # Labels are the same as inputs
+            'labels': inp.squeeze(0).tolist()
         })
-        
+            
     return Dataset.from_list(processed_samples)
 
 def get_dataset(

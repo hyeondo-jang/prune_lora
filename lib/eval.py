@@ -38,73 +38,70 @@ def eval_ppl(
         )
         # Evaluate ppl in no grad context to avoid updating the model
         with torch.no_grad():
-            ppl_test = calculate_ppl(model, testloader, 1, device)
+            ppl_test = calculate_ppl(model, testloader,tokenizer, 1)
             ppls[d] = ppl_test
     return ppls 
 
+@torch.no_grad()
 def calculate_ppl(
     model: AutoModelForCausalLM,
     testenc,
-    bs: int = 1,
-    device: torch.device = None
+    tokenizer: AutoTokenizer,
+    bs: int = 1
 ) -> float:
-    """
-    Calculate the perplexity of the model on the test set.
-    Args:
-        model (AutoModelForCausalLM): The model to evaluate.
-        testenc: The test set encoded as input IDs. Must have input_ids attribute (e.g. TokenizerWrapper,BatchEncoding).
-        bs (int): Batch size for evaluation.
-        device (torch.device): The device to use for evaluation.
-    Returns:
-        float: The perplexity of the model on the test set.
-    """
-    # Get input IDs
+
+    seqlen = model.seq_len
     testenc = testenc.input_ids
+    nsamples = testenc.numel() // seqlen
 
-    # Calculate number of samples
-    nsamples = testenc.numel() // model.seqlen
-
-    # List to store negative log likelihoods
     nlls = []
-    logging.info(f"nsamples {nsamples}")
+    
+    for i in range(0, nsamples, bs):
+        j = min(i + bs, nsamples)
+        batch_size = j - i
 
-    # Loop through each batch
-    for i in range(0,nsamples,bs):
-        if i % 50 == 0:
-            logging.info(f"sample {i}")
+        # Special handling for Gemma model architecture
+        is_gemma = 'Gemma' in model.config.architectures[0]
+        
+        if is_gemma:
+            # 1. Slice the data to seqlen - 1 to make space for BOS token.
+            inputs_slice = testenc[:, (i * seqlen):(i * seqlen + (batch_size * (seqlen - 1)))].to(model.device)
+            inputs_slice = inputs_slice.reshape(batch_size, seqlen - 1)
+            
+            # 2. Prepend BOS token to match the final length to seqlen.
+            bos_tensor = torch.tensor([[tokenizer.bos_token_id] * batch_size]).reshape(batch_size, 1).to(model.device)
+            model_inputs = torch.cat([bos_tensor, inputs_slice], dim=1)
 
-        # Calculate end index
-        j = min(i+bs, nsamples)
+            # 3. Labels (ground truth) are the original text sequence excluding BOS.
+            shift_labels = inputs_slice.contiguous()
 
-        # Prepare inputs and move to device
-        inputs = testenc[:,(i * model.seqlen):(j * model.seqlen)].to(device)
-        inputs = inputs.reshape(j-i, model.seqlen) 
-        if 'gemma' in model.config._name_or_path:  
-            inputs[:, 0] = model.config.bos_token_id  
-        # Forward pass through the model
-        lm_logits = model(inputs).logits
+        else: # For models other than Gemma
+            model_inputs = testenc[:, (i * seqlen):(j * seqlen)].to(model.device)
+            model_inputs = model_inputs.reshape(batch_size, seqlen)
+            shift_labels = model_inputs[:, 1:].contiguous()
 
-        # Shift logits and labels for next token prediction
+        # Model forward pass
+        with torch.no_grad():
+            lm_logits = model(model_inputs).logits
+
+        # Reorder logits for loss calculation
+        # Gemma: L_bos, L_t1, ... L_t(n-2) => total n-1 predictions, matched with labels T1, T2 ... T(n-1)
+        # Other: L_t1, L_t2, ... L_t(n-1) => total n-1 predictions, matched with labels T2, T3 ... Tn
         shift_logits = lm_logits[:, :-1, :].contiguous()
-        shift_labels = inputs[:, 1:]
 
-        # Compute loss
         loss_fct = nn.CrossEntropyLoss()
-        loss = loss_fct(shift_logits.reshape(-1, shift_logits.size(-1)), shift_labels.reshape(-1))
+        # loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+        loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)).to(torch.float32), shift_labels.view(-1))
 
-        # Calculate negative log likelihood
-        neg_log_likelihood = loss.float() * model.seqlen * (j-i)
-
-        # Append to list of negative log likelihoods
+        neg_log_likelihood = loss.float() * (shift_labels.numel() / batch_size) # Calculate NLL based on actual label length
         nlls.append(neg_log_likelihood)
 
-    # Compute perplexity
-    ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * model.seqlen))
-
-    # Empty CUDA cache to save memory
+    ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * seqlen))
     torch.cuda.empty_cache()
 
     return ppl.item()
+
+
 
 
 def eval_zero_shot(args,model_name, model, tokenizer, task_list=["boolq","rte","hellaswag","winogrande","arc_challenge","arc_easy","openbookqa"], 
