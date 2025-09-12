@@ -102,7 +102,8 @@ def main(argv):
         elif FLAGS.prune_method == 'dense':
             logging.info("No pruning applied, model remains dense.")
     if local_rank == 0 and FLAGS.visualize_memory:
-        export_memory_snapshot(FLAGS.prune_method)
+        path = f'{FLAGS.model.split("/")[-1]}_{FLAGS.prune_method}_dual:{FLAGS.admm_dual_dtype}_split:{FLAGS.admm_split_dtype}_base_opt:{FLAGS.admm_base_optimizer}'
+        export_memory_snapshot(path)
         stop_record_memory_history()
         torch.cuda.memory._record_memory_history(enabled=None)
         exit()
