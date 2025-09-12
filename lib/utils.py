@@ -723,12 +723,29 @@ class FP8State:
     @torch.no_grad()
     def dequant(self) -> torch.Tensor:
         """Return FP32 view of stored FP8 data using current scale(s)."""
-        if self.cfg.granularity == "tensorwise":
-            return self.data_fp8.to(torch.float32) * self.scale
+        if self._is_dtensor:
+            # FSDP2 path: dequantize on local shard, then reconstruct DTensor
+            local_data = self.data_fp8.to_local().to(torch.float32)
+            if self.cfg.granularity == "tensorwise":
+                local_dequant = local_data * self.scale
+            else:  # rowwise
+                assert self.ndim >= 2
+                shape = [1] * (self.ndim - 2) + [self.scale.numel(), 1]
+                local_dequant = local_data * self.scale.view(*shape)
+            return DTensor.from_local(
+                local_dequant,
+                device_mesh=self.data_fp8.device_mesh,
+                placements=self.data_fp8.placements,
+                run_check=False
+            )
         else:
-            assert self.ndim >= 2
-            shape = [1] * (self.ndim - 2) + [self.scale.numel(), 1]
-            return self.data_fp8.to(torch.float32) * self.scale.view(*shape)
+            # Standard path
+            if self.cfg.granularity == "tensorwise":
+                return self.data_fp8.to(torch.float32) * self.scale
+            else:  # rowwise
+                assert self.ndim >= 2
+                shape = [1] * (self.ndim - 2) + [self.scale.numel(), 1]
+                return self.data_fp8.to(torch.float32) * self.scale.view(*shape)
 
     @torch.no_grad()
     def get_fp32(self) -> torch.Tensor:
@@ -741,11 +758,24 @@ class FP8State:
         self._update_scale_(x_new)
         if self.cfg.sync_scales and dist.is_available() and dist.is_initialized():
             self._sync_scale_()
-        if self.cfg.granularity == "tensorwise":
-            self.data_fp8.copy_((x_new / (self.scale + self.eps)).to(self.fp8_dtype))
+
+        if self._is_dtensor:
+            assert isinstance(x_new, DTensor), "Input must be a DTensor in FSDP2 mode"
+            # FSDP2 path: quantize on local shard, then copy to local part of storage
+            local_x = x_new.to_local()
+            if self.cfg.granularity == "tensorwise":
+                local_quant = (local_x / (self.scale + self.eps)).to(self.fp8_dtype)
+            else:  # rowwise
+                shape = [1] * (x_new.ndim - 2) + [self.scale.numel(), 1]
+                local_quant = (local_x / (self.scale.view(*shape) + self.eps)).to(self.fp8_dtype)
+            self.data_fp8.to_local().copy_(local_quant)
         else:
-            shape = [1] * (x_new.ndim - 2) + [self.scale.numel(), 1]
-            self.data_fp8.copy_((x_new / (self.scale.view(*shape) + self.eps)).to(self.fp8_dtype))
+            # Standard path
+            if self.cfg.granularity == "tensorwise":
+                self.data_fp8.copy_((x_new / (self.scale + self.eps)).to(self.fp8_dtype))
+            else:  # rowwise
+                shape = [1] * (x_new.ndim - 2) + [self.scale.numel(), 1]
+                self.data_fp8.copy_((x_new / (self.scale.view(*shape) + self.eps)).to(self.fp8_dtype))
 
     # ------------------------------
     # Scale updates & synchronization
@@ -755,12 +785,17 @@ class FP8State:
         if self.cfg.scaling_type == ScalingType.NONE:
             return
         margin = self.cfg.safety_margin
+
+        # For DTensors, compute scale on the local shard.
+        # The subsequent _sync_scale_ will correctly synchronize it.
+        x_local = x.to_local() if isinstance(x, DTensor) else x
+
         if self.cfg.granularity == "tensorwise":
-            maxabs = x.abs().max().to(torch.float32)
+            maxabs = x_local.abs().max().to(torch.float32)
             target = (maxabs / self.vmax) * margin
         else:
-            *_, R, C = x.shape
-            xr = x.reshape(-1, R, C).abs().amax(dim=(0, 2)).to(torch.float32)
+            *_, R, C = x_local.shape
+            xr = x_local.reshape(-1, R, C).abs().amax(dim=(0, 2)).to(torch.float32)
             target = (xr / self.vmax) * margin
         new_scale = torch.clamp(target, min=1e-8)
         self.scale.copy_(new_scale)
