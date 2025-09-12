@@ -177,7 +177,7 @@ def main(argv):
         if FLAGS.eval_zero_shot:
             logging.info(f"--- Evaluating After Pruning with ({FLAGS.prune_method}, Zero-Shot) ---")
             accelerate = "70b" in FLAGS.model
-            task_list = ["boolq", "rte","hellaswag","winogrande", "arc_easy","arc_challenge", "openbookqa"]
+            task_list = ["boolq", "rte","hellaswag","winogrande", "arc_easy","arc_challenge", "openbookqa", "piqa","race"]
             num_shot = 0
             results_after = eval_zero_shot(FLAGS, FLAGS.model, model, tokenizer, task_list, num_shot, accelerate)
             logging.info(f"Zero-shot results after pruning with ({FLAGS.prune_method}):")
@@ -288,8 +288,6 @@ if __name__ == '__main__':
     # Logging & Evaluation
     flags.DEFINE_integer('admm_logging_steps', 1, 'Logging step interval for ADMM training.')
     flags.DEFINE_integer('admm_eval_steps', 1, 'Evaluation step interval for ADMM training.')
-
-
 
     flags.DEFINE_bool('eval_zero_shot', True, 'Whether to evaluate zero-shot performance.')
     flags.DEFINE_bool('wandb', False, 'Whether to use wandb for logging.')
