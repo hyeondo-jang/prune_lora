@@ -1036,9 +1036,8 @@ class ADMMTrainer(Trainer):
                     if param in unwrapped_optimizer.state:
                         state = unwrapped_optimizer.state[param]
                         w = self._loc(param)
-                        z = self._loc(state['split'])
-                        if isinstance(z,FP8State):
-                            z = z.get_fp32()
+                        z = self._loc(state['split'].get_fp32() if isinstance(state['split'],FP8State) else state['split'])
+
                         local_primal_residual_sq += torch.sum((w - z) ** 2)
                         local_weight_norm_sq += torch.sum(w ** 2)
             
@@ -1077,12 +1076,8 @@ class ADMMTrainer(Trainer):
                     if param in unwrapped_optimizer.state:
                         state = unwrapped_optimizer.state[param]
                         w = self._loc(param)
-                        u = self._loc(state['dual'])
-                        z = self._loc(state['split'])
-                        if isinstance(z,FP8State):
-                            z = z.get_fp32()
-                        if isinstance(u,FP8State):
-                            u = u.get_fp32()
+                        u = self._loc(state['dual'].get_fp32() if isinstance(state['dual'],FP8State) else state['dual'])
+                        z = self._loc(state['split'].get_fp32() if isinstance(state['split'],FP8State) else state['split'])
                         p_sparsity = state.get('sparsity', unwrapped_optimizer.sparsity)
                         current_param_lmda = state['lmda'] # Get the per-parameter lmda
                         
