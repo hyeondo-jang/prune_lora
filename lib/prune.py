@@ -740,7 +740,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         logging_strategy="steps",
         eval_steps=FLAGS.admm_eval_steps,
         save_strategy="no",
-        load_best_model_at_end=False,
+        load_best_model_at_end=True if FLAGS.admm_early_stop else False,
         metric_for_best_model="eval_ce_loss" if not FLAGS.admm_early_stop else "eval_relative_residual",
         greater_is_better=False,
         report_to="wandb" if has_wandb and FLAGS.wandb else "none",
