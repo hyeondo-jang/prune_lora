@@ -4,7 +4,8 @@ from transformers import AutoTokenizer
 from lib.prune import prune_safe, prune_alps, prune_wanda, prune_magnitude, prune_sparsegpt, prune_admm, globalprune_admm
 from lib.retrain import retrain_model
 from lib.eval import eval_ppl, eval_zero_shot
-from lib.utils import check_sparsity, get_llm, start_record_memory_history, stop_record_memory_history, export_memory_snapshot
+from lib.data import get_loaders
+from lib.utils import check_sparsity, get_llm, start_record_memory_history, stop_record_memory_history, export_memory_snapshot, compute_dense_outputs, calculate_reconstruction_error
 from absl import logging, app, flags
 from importlib.metadata import version
 from argparse import Namespace
@@ -68,7 +69,11 @@ def main(argv):
 
     device = torch.device(f"cuda:{local_rank}")
     torch.cuda.set_device(device)
-
+    if FLAGS.calculate_global_recon and local_rank == 0:
+        logging.info('capturing dense output for global recon error')
+        _ ,valdata = get_loaders(FLAGS.dataset, FLAGS.nsamples, seed=FLAGS.seed, tokenizer=tokenizer, seqlen=model.seqlen, data_path=FLAGS.data_path)
+        dense_outs = compute_dense_outputs(valdata, model, FLAGS, device, dataset_type="validation", batch_size=2)
+        logging.info('dense output capture done')
     if FLAGS.prune_method != 'global_admm':
         if FLAGS.prune_method == "magnitude":
             model = model.to(torch.float32)
@@ -121,6 +126,16 @@ def main(argv):
     # sparsity_ratio = check_sparsity(model,log_by_block=True)
     # logging.info(f"sparsity sanity check {sparsity_ratio:.4f}")
     # logging.info("*"*30)
+    if FLAGS.calculate_global_recon and local_rank == 0:
+        model = model.to(torch.float32) ## upcast to fp32 for stability
+        model = model.to(device)
+        logging.info('calculating global reconstruction error')
+        recon_error = calculate_reconstruction_error(model, dense_outs, FLAGS, device, batch_size=2)
+        logging.info(f'global reconstruction error (MSE): {recon_error:.6f}')
+        if FLAGS.wandb:
+            wandb.log({"global_recon_error": recon_error})
+        del dense_outs
+        torch.cuda.empty_cache()
     if is_local_pruning and is_distributed: ## broadcast
         model = model.to(device) ## cpu -> gpu for nccl communication
         model.config.use_cache = False
@@ -314,6 +329,7 @@ if __name__ == '__main__':
     flags.DEFINE_integer('admm_logging_steps', 1, 'Logging step interval for ADMM training.')
     flags.DEFINE_integer('admm_eval_steps', 1, 'Evaluation step interval for ADMM training.')
 
+    flags.DEFINE_bool('calculate_global_recon', False, 'Whether to calculate global reconstruction error.')
     flags.DEFINE_bool('eval_zero_shot', True, 'Whether to evaluate zero-shot performance.')
     flags.DEFINE_bool('wandb', True, 'Whether to use wandb for logging.')
     flags.DEFINE_string('wandb_project', 'safe-torch', 'wandb project name.')
