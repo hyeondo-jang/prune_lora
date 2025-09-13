@@ -889,3 +889,8 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         logging.info("Starting ADMM training on all processes...")
     
     trainer.train()
+    ## TODO: work in progress for GPA retrain
+    # if trainer.is_fsdp_enabled:
+    #     accelerator = trainer.accelerator
+
+    #     model_state_dict = trainer.load_fsdp_model()

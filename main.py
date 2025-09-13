@@ -135,8 +135,18 @@ def main(argv):
     # sparsity_ratio = check_sparsity(model,log_by_block=True)
     # logging.info(f"sparsity sanity check {sparsity_ratio:.4f}")
     # logging.info("*"*30)
-    ##TODO: check whether global_admm is compatible with retrain.
     if FLAGS.do_retrain:
+        if is_distributed and FLAGS.prune_method == 'global_admm': ## assume global_admm uses fsdp2 for distributed training.
+            state_dict_options = StateDictOptions(full_state_dict=True, cpu_offload=True,broadcast_from_rank0=True)
+            full_state = get_model_state_dict(model, options=state_dict_options)
+            del model
+            torch.cuda.empty_cache()
+            model = get_llm(FLAGS.model, FLAGS.seqlen)
+            with torch.no_grad():
+                _ = model.load_state_dict(full_state, strict=True)
+            del full_state
+            torch.cuda.empty_cache()
+            model.to(device)
         if FLAGS.retrain_dataset is None:
             FLAGS.retrain_dataset = FLAGS.dataset
         if local_rank == 0:
@@ -210,8 +220,8 @@ if __name__ == '__main__':
     flags.DEFINE_enum('sparsity_type', "unstructured", ["unstructured", "4:8", "2:4"], 'Type of sparsity.')
     flags.DEFINE_enum('prune_method', "magnitude", ["magnitude", "wanda", "sparsegpt", "safe", "alps","global_admm", 'dense'], 'Pruning method.')
     flags.DEFINE_enum('dataset', 'c4', ["c4", "wikitext2"], 'Calibration dataset.')
-    # flags.DEFINE_string('data_path', '/home/kwanheelee/.cache/huggingface/hub/datasets--allenai--c4/snapshots/1588ec454efa1a09f29cd18ddd04fe05fc8653a2', 'Path to local raw dataset directory (e.g., ~/.cache/huggingface/hub/dataset). Overrides online download.')
-    flags.DEFINE_string('data_path', None, 'Path to local raw dataset directory (e.g., ~/.cache/huggingface/hub/dataset). Overrides online download.')
+    flags.DEFINE_string('data_path', '/home/kwanheelee/.cache/huggingface/hub/datasets--allenai--c4/snapshots/1588ec454efa1a09f29cd18ddd04fe05fc8653a2', 'Path to local raw dataset directory (e.g., ~/.cache/huggingface/hub/dataset). Overrides online download.')
+    # flags.DEFINE_string('data_path', None, 'Path to local raw dataset directory (e.g., ~/.cache/huggingface/hub/dataset). Overrides online download.')
     # SAFE hyperparams
     flags.DEFINE_float('lmda', 1e-3, 'Penalty parameter for SAFE dual update.')
     flags.DEFINE_integer('batch_size', 4, 'Batch size for SAFE.')
@@ -288,7 +298,7 @@ if __name__ == '__main__':
     flags.DEFINE_string('retrain_dataset', None, 'Dataset for retraining.')
     flags.DEFINE_float('retrain_learning_rate', 2e-5, 'Learning rate for the MaskedAdam optimizer.')
     flags.DEFINE_integer('retrain_batch_size', 2, 'The batch size per device for retraining.')
-    flags.DEFINE_integer('retrain_steps', 10, 'The number of training steps for retraining.')
+    flags.DEFINE_integer('retrain_steps', 1, 'The number of training steps for retraining.')
     flags.DEFINE_integer('retrain_gradient_accumulation_steps', 1, 'Gradient accumulation steps for retraining.')
     
     # Logging & Evaluation
