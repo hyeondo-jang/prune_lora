@@ -4,6 +4,7 @@ import math
 import torch.nn as nn
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.optimization import get_linear_schedule_with_warmup, AdamW
+from transformers.trainer_callback import EarlyStoppingCallback
 from torch.amp import autocast
 from .pruner import WrappedGPT, ALPS_prune, SparseGPT
 from .data import get_loaders,get_dataset, TensorData,TensorDataLoader,TensorData, TensorDataLoader
@@ -740,7 +741,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         eval_steps=FLAGS.admm_eval_steps,
         save_strategy="no",
         load_best_model_at_end=False,
-        metric_for_best_model="eval_ce_loss",
+        metric_for_best_model="eval_ce_loss" if not FLAGS.admm_early_stop else "eval_relative_residual",
         greater_is_better=False,
         report_to="wandb" if has_wandb and FLAGS.wandb else "none",
         remove_unused_columns=False,
@@ -868,6 +869,10 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         logging.info(f"ADMM Datasets prepared: Train size {len(train_inputs)}, Valid size {len(valid_inputs)}")
 
     model.train()
+    early_stopping_callback = EarlyStoppingCallback(
+        early_stopping_patience=FLAGS.admm_early_stopping_patience,
+        early_stopping_threshold=FLAGS.admm_early_stopping_threshold
+    ) if FLAGS.admm_early_stop else None
     # 4. Initialize ADMMTrainer
     if admm_training_args.local_rank == 0:
         logging.info("Initializing ADMMTrainer...")
@@ -879,6 +884,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         tokenizer=tokenizer,
         compute_metrics=None,
         preprocess_logits_for_metrics=None,
+        callbacks=[early_stopping_callback] if early_stopping_callback else None,
     )
 
     # 5. Start ADMM Training
