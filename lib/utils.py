@@ -16,7 +16,7 @@ class ADMMEarlyStoppingCallback(TrainerCallback):
         self.threshold = threshold
         self.early_stop_counter = 0
 
-    def on_evaluate(self, args, state, control, metrics=None):
+    def on_evaluate(self, args, state, control, metrics=None, **kwargs):
         if metrics is None:
             return
 
