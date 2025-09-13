@@ -2017,6 +2017,18 @@ class ADMMTrainer(Trainer):
 
 
 class Retrainer(Trainer):
+    def __init__(
+        self,
+        *args,
+        **kwargs,
+    ):
+            
+        super().__init__(*args, **kwargs)
+        
+        self.is_deepspeed_enabled = getattr(self.accelerator.state, "deepspeed_plugin", None) is not None
+        self.is_fsdp_enabled = getattr(self.accelerator.state, "fsdp_plugin", None) is not None
+        self.is_tp_enabled = getattr(self.accelerator.state, "torch_tp_plugin", None) is not None
+
     def set_initial_training_values(
         self, args: TrainingArguments, dataloader: DataLoader, total_train_batch_size: int
     ):

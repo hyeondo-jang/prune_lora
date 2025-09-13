@@ -25,7 +25,8 @@ def retrain_model(args, model, tokenizer, device):
     world_size = 1
     if dist.is_initialized():
         world_size = dist.get_world_size()
-
+    if model.dtype == torch.float16: ## upcast to fp32 for stability
+        model = model.to(torch.float32)
     retrain_args = RetrainTrainingArguments(
         output_dir="./retrain_output",
         learning_rate=args.retrain_learning_rate,
@@ -35,6 +36,7 @@ def retrain_model(args, model, tokenizer, device):
         save_strategy="no",
         report_to=[],
         gradient_accumulation_steps=args.retrain_gradient_accumulation_steps,
+        bf16=True
     )
 
     num_train_samples = retrain_args.max_steps * retrain_args.train_batch_size * retrain_args.gradient_accumulation_steps * world_size
