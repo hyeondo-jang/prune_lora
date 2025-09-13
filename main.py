@@ -80,7 +80,8 @@ def main(argv):
     if local_rank == 0 and FLAGS.visualize_memory:
         start_record_memory_history()
     if FLAGS.sparsity_ratio != 0:
-        logging.info("pruning starts")
+        if local_rank == 0:
+            logging.info("pruning starts")
         is_local_pruning = FLAGS.prune_method != 'global_admm' and FLAGS.prune_method != 'dense'
         
         # --- Local Pruning on Main Process Only ---
@@ -116,6 +117,7 @@ def main(argv):
     # logging.info("*"*30)
     if is_local_pruning and is_distributed: ## broadcast
         model = model.to(device) ## cpu -> gpu for nccl communication
+        model.config.use_cache = False
         if local_rank == 0:
             logging.info("[rank0] broadcasting pruned weights/buffers")
         with torch.no_grad():
@@ -136,26 +138,27 @@ def main(argv):
     # logging.info(f"sparsity sanity check {sparsity_ratio:.4f}")
     # logging.info("*"*30)
     if FLAGS.do_retrain:
-        if is_distributed and FLAGS.prune_method == 'global_admm': ## assume global_admm uses fsdp2 for distributed training.
-            state_dict_options = StateDictOptions(full_state_dict=True, cpu_offload=True,broadcast_from_rank0=True)
-            full_state = get_model_state_dict(model, options=state_dict_options)
-            del model
-            torch.cuda.empty_cache()
-            model = get_llm(FLAGS.model, FLAGS.seqlen)
-            with torch.no_grad():
-                _ = model.load_state_dict(full_state, strict=True)
-            del full_state
-            torch.cuda.empty_cache()
-            model.to(device)
+        ## TODO: handle distributed retraining with gpa
+        # if is_distributed and FLAGS.prune_method == 'global_admm': ## assume global_admm uses fsdp2 for distributed training.
+        #     state_dict_options = StateDictOptions(full_state_dict=True, cpu_offload=True,broadcast_from_rank0=True)
+        #     full_state = get_model_state_dict(model, options=state_dict_options)
+        #     del model
+        #     torch.cuda.empty_cache()
+        #     model = get_llm(FLAGS.model, FLAGS.seqlen)
+        #     with torch.no_grad():
+        #         _ = model.load_state_dict(full_state, strict=True)
+        #     del full_state
+        #     torch.cuda.empty_cache()
+        #     model.to(device)
+        
         if FLAGS.retrain_dataset is None:
             FLAGS.retrain_dataset = FLAGS.dataset
         if local_rank == 0:
             logging.info("--- Starting Retraining Phase ---")
         retrain_model(FLAGS, model, tokenizer, device)
-
-    if int(os.environ.get("WORLD_SIZE", 1)) > 1: ## destroy other process, gather params.
         if local_rank == 0:
-            logging.info("--- Retraining Finished ---")
+            logging.info("Retraining finished")
+
 
     if is_distributed:
         dist.barrier()

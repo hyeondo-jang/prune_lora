@@ -39,7 +39,7 @@ def retrain_model(args, model, tokenizer, device):
         bf16=True
     )
 
-    num_train_samples = retrain_args.max_steps * retrain_args.train_batch_size * retrain_args.gradient_accumulation_steps * world_size
+    num_train_samples = retrain_args.max_steps * retrain_args.per_device_train_batch_size * retrain_args.gradient_accumulation_steps * world_size
 
     train_dataset = get_dataset(
         args.dataset,
