@@ -158,7 +158,12 @@ def main(argv):
 
     if local_rank == 0:
         
-        model = model.to(torch.bfloat16)
+        if "gemma-2-27b" in FLAGS.model:
+            logging.info("gemma-2-27b model detected. Casting to torch.bfloat16 for stability.")
+            model = model.to(torch.bfloat16)
+        else:
+            logging.info(f"Casting model ({FLAGS.model}) to torch.float16.")
+            model = model.to(torch.float16)
         model.seq_len = FLAGS.seqlen
         model = model.to(device)
         model.eval()
