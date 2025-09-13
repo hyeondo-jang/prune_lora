@@ -741,7 +741,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         eval_steps=FLAGS.admm_eval_steps,
         save_strategy="no",
         load_best_model_at_end=False,
-        metric_for_best_model="eval_ce_loss",
+        metric_for_best_model="eval_ce_loss" if not FLAGS.admm_early_stop else "eval_relative_residual",
         greater_is_better=False,
         report_to="wandb" if has_wandb and FLAGS.wandb else "none",
         remove_unused_columns=False,
@@ -872,7 +872,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
     early_stopping_callback = EarlyStoppingCallback(
         early_stopping_patience=FLAGS.admm_early_stopping_patience,
         early_stopping_threshold=FLAGS.admm_early_stopping_threshold
-    ) if FLAGS.admm_eary_stop else None
+    ) if FLAGS.admm_early_stop else None
     # 4. Initialize ADMMTrainer
     if admm_training_args.local_rank == 0:
         logging.info("Initializing ADMMTrainer...")
@@ -884,7 +884,6 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         tokenizer=tokenizer,
         compute_metrics=None,
         preprocess_logits_for_metrics=None,
-        metric_for_best_model="eval_relative_residual" if early_stopping_callback else None,
         callbacks=[early_stopping_callback] if early_stopping_callback else None,
     )
 
