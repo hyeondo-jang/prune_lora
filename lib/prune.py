@@ -736,12 +736,12 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         fp16=(FLAGS.admm_precision == 'fp16'),
         bf16=(FLAGS.admm_precision == 'bf16' and torch.cuda.is_bf16_supported()),
         logging_steps=FLAGS.admm_logging_steps,
-        evaluation_strategy="steps",
+        eval_strategy= "steps",
         logging_strategy="steps",
         eval_steps=FLAGS.admm_eval_steps,
         save_strategy="no",
-        load_best_model_at_end=True if FLAGS.admm_early_stop else False,
-        metric_for_best_model="eval_ce_loss" if not FLAGS.admm_early_stop else "eval_relative_residual",
+        load_best_model_at_end=False,
+        metric_for_best_model="eval_ce_loss",
         greater_is_better=False,
         report_to="wandb" if has_wandb and FLAGS.wandb else "none",
         remove_unused_columns=False,
@@ -869,11 +869,8 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         logging.info(f"ADMM Datasets prepared: Train size {len(train_inputs)}, Valid size {len(valid_inputs)}")
 
     model.train()
-    early_stopping_callback = EarlyStoppingCallback(
-        early_stopping_patience=FLAGS.admm_early_stopping_patience,
-        early_stopping_threshold=FLAGS.admm_early_stopping_threshold
-    ) if FLAGS.admm_early_stop else None
     # 4. Initialize ADMMTrainer
+    earlystop_callback = ADMMEarlyStoppingCallback(patience=FLAGS.admm_early_stopping_patience, threshold=FLAGS.admm_early_stopping_threshold) if FLAGS.admm_early_stop else None
     if admm_training_args.local_rank == 0:
         logging.info("Initializing ADMMTrainer...")
     trainer = ADMMTrainer(
@@ -884,7 +881,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         tokenizer=tokenizer,
         compute_metrics=None,
         preprocess_logits_for_metrics=None,
-        callbacks=[early_stopping_callback] if early_stopping_callback else None,
+        callbacks=[earlystop_callback] if earlystop_callback is not None else None,
     )
 
     # 5. Start ADMM Training

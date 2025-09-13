@@ -1670,6 +1670,7 @@ class ADMMTrainer(Trainer):
                     self._maybe_log_save_evaluate(tr_loss, grad_norm, model, trial, epoch, ignore_keys_for_eval)
                 else:
                     self.control = self.callback_handler.on_substep_end(args, self.state, self.control)
+    
 
                 if self.control.should_epoch_stop or self.control.should_training_stop:
                     # PyTorch/XLA relies on the data loader to insert the mark_step for
@@ -1725,6 +1726,7 @@ class ADMMTrainer(Trainer):
             # Clean the state at the end of training
             delattr(self, "_past")
         unwrapped_optimizer.final_projection()
+
         # if self.is_fsdp_enabled:
         #     if self.is_world_process_zero():
         #         logger.info("Gathering full model parameters for final projection...")

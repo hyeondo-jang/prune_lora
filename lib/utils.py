@@ -8,6 +8,28 @@ import torch.distributed as dist
 from typing import Optional, List, Tuple, Literal, Union
 import enum
 from dataclasses import dataclass
+from transformers.trainer_callback import TrainerCallback
+
+class ADMMEarlyStoppingCallback(TrainerCallback):
+    def __init__(self, patience: int, threshold: float):
+        self.patience = patience
+        self.threshold = threshold
+        self.early_stop_counter = 0
+
+    def on_evaluate(self, args, state, control, metrics=None):
+        if metrics is None:
+            return
+
+        current_metric = metrics.get("eval_relative_residual")
+        if current_metric is not None:
+            if current_metric < self.threshold:
+                self.early_stop_counter = 0
+            else:
+                self.early_stop_counter += 1
+
+            if self.early_stop_counter >= self.patience:
+                control.should_training_stop = True
+                logger.info(f"Early stopping triggered: {self.early_stop_counter}/{self.patience}")
 
 def get_llm(
     model_name:str, 
