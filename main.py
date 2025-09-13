@@ -70,8 +70,12 @@ def main(argv):
     torch.cuda.set_device(device)
 
     if FLAGS.prune_method != 'global_admm':
-        model = model.to(torch.float16)
-        model = model.to(device)
+        if FLAGS.prune_method == "magnitude":
+            model = model.to(torch.float32)
+        else:
+            model = model.to(torch.bfloat16)
+        model = model.to('cpu')
+        # model = model.to(device)
     else:
         model = model.to('cpu')
         model.config.use_cache = False
@@ -79,11 +83,11 @@ def main(argv):
     logging.info(f"Process {local_rank} uses device {device}")
     if local_rank == 0 and FLAGS.visualize_memory:
         start_record_memory_history()
+    is_local_pruning = FLAGS.prune_method != 'global_admm' and FLAGS.prune_method != 'dense'
     if FLAGS.sparsity_ratio != 0:
-        if local_rank == 0:
-            logging.info("pruning starts")
-        is_local_pruning = FLAGS.prune_method != 'global_admm' and FLAGS.prune_method != 'dense'
-        
+
+        logging.info("pruning starts")
+
         # --- Local Pruning on Main Process Only ---
         if is_local_pruning and local_rank == 0:
             if FLAGS.prune_method == "wanda":
@@ -102,12 +106,14 @@ def main(argv):
             globalprune_admm(FLAGS, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
         elif FLAGS.prune_method == 'dense':
             logging.info("No pruning applied, model remains dense.")
+    
     if local_rank == 0 and FLAGS.visualize_memory:
         path = f'{FLAGS.model.split("/")[-1]}_{FLAGS.prune_method}_dual:{FLAGS.admm_dual_dtype}_split:{FLAGS.admm_split_dtype}_base_opt:{FLAGS.admm_base_optimizer}'
         export_memory_snapshot(path)
         stop_record_memory_history()
         torch.cuda.memory._record_memory_history(enabled=None)
         exit()
+    
     if local_rank == 0:
         logging.info("Pruning finished")
     # ## sparsity sanity check after pruning (per-device)
@@ -137,6 +143,7 @@ def main(argv):
     # sparsity_ratio = check_sparsity(model,log_by_block=True)
     # logging.info(f"sparsity sanity check {sparsity_ratio:.4f}")
     # logging.info("*"*30)
+
     if FLAGS.do_retrain:
         ## TODO: handle distributed retraining with gpa
         # if is_distributed and FLAGS.prune_method == 'global_admm': ## assume global_admm uses fsdp2 for distributed training.
@@ -177,7 +184,7 @@ def main(argv):
         else:
             logging.info(f"Casting model ({FLAGS.model}) to torch.float16.")
             model = model.to(torch.float16)
-        model.seq_len = FLAGS.seqlen
+        model.seqlen = FLAGS.seqlen
         model = model.to(device)
         model.eval()
         # sparsity sanity check
@@ -219,12 +226,12 @@ if __name__ == '__main__':
     flags.DEFINE_integer('seqlen', 2048, 'Sequence length for the model.')
     flags.DEFINE_integer('seed', 0, 'Seed for sampling the calibration data.')
     flags.DEFINE_integer('nsamples', 128, 'Number of calibration samples.')
-    flags.DEFINE_float('sparsity_ratio', 0.5, 'Sparsity level')
+    flags.DEFINE_float('sparsity_ratio', 0.6, 'Sparsity level')
     flags.DEFINE_enum('sparsity_type', "unstructured", ["unstructured", "4:8", "2:4"], 'Type of sparsity.')
-    flags.DEFINE_enum('prune_method', "magnitude", ["magnitude", "wanda", "sparsegpt", "safe", "alps","global_admm", 'dense'], 'Pruning method.')
+    flags.DEFINE_enum('prune_method', "wanda", ["magnitude", "wanda", "sparsegpt", "safe", "alps","global_admm", 'dense'], 'Pruning method.')
     flags.DEFINE_enum('dataset', 'c4', ["c4", "wikitext2"], 'Calibration dataset.')
-    flags.DEFINE_string('data_path', '/home/kwanheelee/.cache/huggingface/hub/datasets--allenai--c4/snapshots/1588ec454efa1a09f29cd18ddd04fe05fc8653a2', 'Path to local raw dataset directory (e.g., ~/.cache/huggingface/hub/dataset). Overrides online download.')
-    # flags.DEFINE_string('data_path', None, 'Path to local raw dataset directory (e.g., ~/.cache/huggingface/hub/dataset). Overrides online download.')
+    # flags.DEFINE_string('data_path', '/home/kwanheelee/.cache/huggingface/hub/datasets--allenai--c4/snapshots/1588ec454efa1a09f29cd18ddd04fe05fc8653a2', 'Path to local raw dataset directory (e.g., ~/.cache/huggingface/hub/dataset). Overrides online download.')
+    flags.DEFINE_string('data_path', None, 'Path to local raw dataset directory (e.g., ~/.cache/huggingface/hub/dataset). Overrides online download.')
     # SAFE hyperparams
     flags.DEFINE_float('lmda', 1e-3, 'Penalty parameter for SAFE dual update.')
     flags.DEFINE_integer('batch_size', 4, 'Batch size for SAFE.')
@@ -246,7 +253,6 @@ if __name__ == '__main__':
     flags.DEFINE_bool('save_model',False, 'Whether to save the pruned model after ADMM training.')
     flags.DEFINE_bool('is_safe', False, 'Whether to use SAFE')
     
-
     # Training Loop Config
     flags.DEFINE_integer('admm_epochs', 1, 'Number of epochs for ADMM training.')
     flags.DEFINE_integer('admm_steps', 10, 'Max steps for ADMM training. Overrides admm_epochs if > 0.')
@@ -309,7 +315,7 @@ if __name__ == '__main__':
     flags.DEFINE_integer('admm_eval_steps', 1, 'Evaluation step interval for ADMM training.')
 
     flags.DEFINE_bool('eval_zero_shot', True, 'Whether to evaluate zero-shot performance.')
-    flags.DEFINE_bool('wandb', False, 'Whether to use wandb for logging.')
+    flags.DEFINE_bool('wandb', True, 'Whether to use wandb for logging.')
     flags.DEFINE_string('wandb_project', 'safe-torch', 'wandb project name.')
     flags.DEFINE_bool('visualize_memory', False, 'Whether to visualize memory usage.')
     app.run(main)

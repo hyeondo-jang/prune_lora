@@ -226,6 +226,7 @@ def get_model_layers(model):
     Raises:
         ValueError: If the model architecture is unsupported.
     """
+
     if hasattr(model, 'model') and hasattr(model.model, 'layers'):
         # Llama, Gemma, Mistral, etc.
         return model.model.layers

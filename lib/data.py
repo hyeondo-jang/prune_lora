@@ -62,7 +62,6 @@ def _get_raw_dataset(dataset_name, data_type="train", data_path=None):
         raise ValueError(f"Unsupported dataset: {dataset_name}")
 
 def _process_and_tokenize(raw_dataset, dataset_name, tokenizer, nsamples, seqlen, seed):
-    # ... (이 함수는 변경 없음)
     random.seed(seed)
     
     all_tokens = []

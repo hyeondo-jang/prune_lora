@@ -42,6 +42,68 @@ def eval_ppl(
             ppls[d] = ppl_test
     return ppls 
 
+# @torch.no_grad()
+# def calculate_ppl(
+#     model: AutoModelForCausalLM,
+#     testenc,
+#     tokenizer: AutoTokenizer,
+#     bs: int = 1
+# ) -> float:
+
+#     seqlen = model.seqlen
+#     testenc = testenc.input_ids
+#     nsamples = testenc.numel() // seqlen
+
+#     nlls = []
+    
+#     for i in range(0, nsamples, bs):
+#         j = min(i + bs, nsamples)
+#         batch_size = j - i
+
+#         # Special handling for Gemma model architecture
+#         is_gemma = 'Gemma' in model.config.architectures[0]
+        
+#         if is_gemma:
+#             # 1. Slice the data to seqlen - 1 to make space for BOS token.
+#             inputs_slice = testenc[:, (i * seqlen):(i * seqlen + (batch_size * (seqlen - 1)))].to(model.device)
+#             inputs_slice = inputs_slice.reshape(batch_size, seqlen - 1)
+            
+#             # 2. Prepend BOS token to match the final length to seqlen.
+#             bos_tensor = torch.tensor([[tokenizer.bos_token_id] * batch_size]).reshape(batch_size, 1).to(model.device)
+#             model_inputs = torch.cat([bos_tensor, inputs_slice], dim=1)
+
+#             # 3. Labels (ground truth) are the original text sequence excluding BOS.
+#             shift_labels = inputs_slice.contiguous()
+
+#         else: # For models other than Gemma
+#             model_inputs = testenc[:, (i * seqlen):(j * seqlen)].to(model.device)
+#             model_inputs = model_inputs.reshape(batch_size, seqlen)
+#             shift_labels = model_inputs[:, 1:].contiguous()
+
+#         # Model forward pass
+#         with torch.no_grad():
+#             lm_logits = model(model_inputs).logits
+
+#         # Reorder logits for loss calculation
+#         # Gemma: L_bos, L_t1, ... L_t(n-2) => total n-1 predictions, matched with labels T1, T2 ... T(n-1)
+#         # Other: L_t1, L_t2, ... L_t(n-1) => total n-1 predictions, matched with labels T2, T3 ... Tn
+#         shift_logits = lm_logits[:, :-1, :].contiguous()
+
+#         loss_fct = nn.CrossEntropyLoss()
+#         # loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+#         loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)).to(torch.float32), shift_labels.view(-1))
+
+#         neg_log_likelihood = loss.float() * (shift_labels.numel() / batch_size) # Calculate NLL based on actual label length
+#         nlls.append(neg_log_likelihood)
+
+#     ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * seqlen))
+#     torch.cuda.empty_cache()
+
+#     return ppl.item()
+
+
+
+
 @torch.no_grad()
 def calculate_ppl(
     model: AutoModelForCausalLM,
@@ -50,7 +112,7 @@ def calculate_ppl(
     bs: int = 1
 ) -> float:
 
-    seqlen = model.seq_len
+    seqlen = model.seqlen
     testenc = testenc.input_ids
     nsamples = testenc.numel() // seqlen
 
@@ -60,37 +122,33 @@ def calculate_ppl(
         j = min(i + bs, nsamples)
         batch_size = j - i
 
+        # First cut the input to seqlen length for all models
+        model_inputs = testenc[:, (i * seqlen):(j * seqlen)].to(model.device)
+        model_inputs = model_inputs.reshape(batch_size, seqlen)
+
         # Special handling for Gemma model architecture
         is_gemma = 'Gemma' in model.config.architectures[0]
         
+        # === Modified part: Gemma handling logic ===
         if is_gemma:
-            # 1. Slice the data to seqlen - 1 to make space for BOS token.
-            inputs_slice = testenc[:, (i * seqlen):(i * seqlen + (batch_size * (seqlen - 1)))].to(model.device)
-            inputs_slice = inputs_slice.reshape(batch_size, seqlen - 1)
-            
-            # 2. Prepend BOS token to match the final length to seqlen.
-            bos_tensor = torch.tensor([[tokenizer.bos_token_id] * batch_size]).reshape(batch_size, 1).to(model.device)
-            model_inputs = torch.cat([bos_tensor, inputs_slice], dim=1)
+            # 1. Replace the first token of existing sequence with BOS token
+            model_inputs[:, 0] = tokenizer.bos_token_id
 
-            # 3. Labels (ground truth) are the original text sequence excluding BOS.
-            shift_labels = inputs_slice.contiguous()
-
-        else: # For models other than Gemma
-            model_inputs = testenc[:, (i * seqlen):(j * seqlen)].to(model.device)
-            model_inputs = model_inputs.reshape(batch_size, seqlen)
-            shift_labels = model_inputs[:, 1:].contiguous()
+        # 2. Label generation logic applies equally to both Gemma and other models
+        # [BOS, t2, t3, ...] -> labels: [t2, t3, ...]
+        # [t1, t2, t3, ...] -> labels: [t2, t3, ...]
+        shift_labels = model_inputs[:, 1:].contiguous()
+        # ==================================
 
         # Model forward pass
         with torch.no_grad():
             lm_logits = model(model_inputs).logits
 
         # Reorder logits for loss calculation
-        # Gemma: L_bos, L_t1, ... L_t(n-2) => total n-1 predictions, matched with labels T1, T2 ... T(n-1)
-        # Other: L_t1, L_t2, ... L_t(n-1) => total n-1 predictions, matched with labels T2, T3 ... Tn
+        # Excluding the last logit makes the length equal to prediction targets (labels)
         shift_logits = lm_logits[:, :-1, :].contiguous()
 
         loss_fct = nn.CrossEntropyLoss()
-        # loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
         loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)).to(torch.float32), shift_labels.view(-1))
 
         neg_log_likelihood = loss.float() * (shift_labels.numel() / batch_size) # Calculate NLL based on actual label length
