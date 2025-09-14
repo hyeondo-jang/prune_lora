@@ -705,6 +705,7 @@ class AdmmTrainingArguments(TrainingArguments):
     ## gradient normalization
     normalize_grad: bool = field(default=False, metadata={"help": "Normalize gradients during ADMM training. Note that gradient normalization is only performed with respect to the gradients of the training objective."})
     normalize_prox_grad: bool = field(default=False, metadata={"help": "Normalize the proximal gradient in ADMM."})
+    mean_prox_grad: bool = field(default=False, metadata={"help": "mean prox grad for scale invariance"})
 
 # --- globalprune_admm function ---
 def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
@@ -786,6 +787,7 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         ## gradient normalization
         normalize_grad=FLAGS.normalize_grad,
         normalize_prox_grad=FLAGS.normalize_prox_grad,
+        mean_prox_grad=FLAGS.mean_prox_grad
     )
 
     # --- 로깅은 메인 프로세스에서만 수행 ---

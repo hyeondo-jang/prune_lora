@@ -307,6 +307,7 @@ if __name__ == '__main__':
     flags.DEFINE_enum('loss_type', 'ntp', ['rem', 'ntp'], "Loss type for ADMM training ('rem' for reconstruction, 'ntp' for next token prediction).")
     flags.DEFINE_bool('normalize_grad', False, 'Whether to normalize gradients during ADMM training. Note that gradient normalization is only performed with respect to the gradients of the training objective.')
     flags.DEFINE_bool('normalize_prox_grad', False, 'Whether to normalize the proximal gradient in ADMM.')
+    flags.DEFINE_bool('mean_prox_grad',False, 'mean proximal grad for scale invariance')
     flags.DEFINE_bool('admm_adaptive_sparsity', False, 'Whether to use adaptive sparsity based on sensitivity scores in ADMM.')
     flags.DEFINE_integer('admm_adaptive_sparsity_samples', 32, 'Whether to use adaptive sparsity based on sensitivity scores in ADMM.')
     flags.DEFINE_bool('admm_adaptive_sparsity_smooth', False, 'Whether to smooth the adaptive sparsity scores in ADMM.')

@@ -75,6 +75,7 @@ def get_admm_optimizer(base_optimizer_cls):
             accelerator=None,                    # optional: to get world_size and device
             init_lambda_from_inv_resid: bool = False,
             normalize_prox_grad: bool = False,
+            mean_prox_grad:bool = False,
             **base_optimizer_kwargs
         ):
             super().__init__(param_groups, **base_optimizer_kwargs)
@@ -89,6 +90,7 @@ def get_admm_optimizer(base_optimizer_cls):
             self.lmda_schedule_mode = lmda_schedule_mode.lower()
             self.init_lambda_from_inv_resid = init_lambda_from_inv_resid
             self.normalize_prox_grad = normalize_prox_grad
+            self.mean_prox_grad = mean_prox_grad
 
             if self.lmda_schedule_mode == 'constant':
                 self.lmda_default = float(lmda)
@@ -276,6 +278,8 @@ def get_admm_optimizer(base_optimizer_cls):
                             penalty_norm = torch.norm(penalty)
                             if penalty_norm > 1e-9:
                                 penalty = penalty / penalty_norm
+                        elif self.mean_prox_grad:
+                            penalty /= w.numel()
                         prox = lmda * penalty
                         w.data.add_(-prox) ## lr decoupling (constant penalty)
                     else:
@@ -284,6 +288,8 @@ def get_admm_optimizer(base_optimizer_cls):
                             penalty_norm = torch.norm(penalty)
                             if penalty_norm > 1e-9:
                                 penalty = penalty / penalty_norm
+                        elif self.mean_prox_grad:
+                            penalty /= w.numel()
                         prox = lmda * penalty
                         # Coupled: add to gradient, happens BEFORE optimizer step
                         # Match AMP grad dtype and distributed averaging scale

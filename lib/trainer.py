@@ -518,6 +518,7 @@ class ADMMTrainer(Trainer):
                     split_dtype=self.args.admm_split_dtype,
                     accelerator=self.accelerator,
                     normalize_prox_grad=self.args.normalize_prox_grad,
+                    mean_prox_grad=self.args.mean_prox_grad,
                     **base_optimizer_kwargs,
                 )
             if self.is_world_process_zero():
