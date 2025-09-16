@@ -33,6 +33,9 @@ from transformers.trainer_callback import (
     TrainerControl,
     TrainerState,
 )
+from transformers.models.auto.modeling_auto import (
+    MODEL_FOR_CAUSAL_LM_MAPPING_NAMES,
+)
 from accelerate.data_loader import skip_first_batches
 from transformers.integrations.tpu import tpu_spmd_dataloader
 from transformers.integrations.deepspeed import deepspeed_init, deepspeed_load_checkpoint, is_deepspeed_available
@@ -587,6 +590,7 @@ class ADMMTrainer(Trainer):
         # If `return_loss` is not specified or being `None` in `inputs`, we check if the default value of `return_loss`
         # is `True` in `model.forward`.
         return_loss = inputs.get("return_loss", None)
+        rem_loss = None
         if return_loss is None:
             return_loss = self.can_return_loss
         loss_without_labels = True if len(self.label_names) == 0 and return_loss else False
@@ -631,10 +635,15 @@ class ADMMTrainer(Trainer):
                     logits = smp_nested_concat(logits_mb)
             else:
                 if self.args.loss_type == "rem":
-                    ##TODO: implement rem loss
-                    pass
+                    with self.compute_loss_context_manager():
+                        rem_loss , outputs = self.compute_loss(model, prepared_inputs, return_outputs=True)
+                    if isinstance(outputs, dict):
+                        logits = tuple(v for k, v in outputs.items() if k not in ignore_keys + ["loss"])
+                        # generated_labels = outputs.get("generated_labels_for_metrics", None)
+                    else:
+                        logits = outputs
+                    loss = outputs.get("loss", None)
                 else:
-                    ## standard ce loss
                     if has_labels or loss_without_labels:
                         with self.compute_loss_context_manager():
                             loss, outputs = self.compute_loss(model, prepared_inputs, return_outputs=True)
@@ -656,13 +665,13 @@ class ADMMTrainer(Trainer):
                         if self.args.past_index >= 0:
                             self._past = outputs[self.args.past_index - 1]                     
         if prediction_loss_only:
-            return (loss, None, None)
+            return (rem_loss, loss, None, None)
 
         logits = nested_detach(logits)
         if len(logits) == 1:
             logits = logits[0]
 
-        return (loss, logits, original_labels)
+        return (rem_loss, loss, logits, original_labels)
 
         ## LEGACY CODE. 
         # with torch.inference_mode():
@@ -850,6 +859,7 @@ class ADMMTrainer(Trainer):
             self._past = None
 
         # Initialize containers
+        all_rem_losses = EvalLoopContainer(self.args.eval_do_concat_batches, padding_index=-100)
         all_losses = EvalLoopContainer(self.args.eval_do_concat_batches, padding_index=-100)
         all_preds = EvalLoopContainer(self.args.eval_do_concat_batches, padding_index=-100)
         all_labels = EvalLoopContainer(self.args.eval_do_concat_batches, padding_index=-100)
@@ -871,7 +881,7 @@ class ADMMTrainer(Trainer):
                     batch_size = observed_batch_size
 
             # Prediction step
-            losses, logits, labels = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
+            rem_losses, losses, logits, labels = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
             main_input_name = getattr(self.model, "main_input_name", "input_ids")
             inputs_decode = self._prepare_input(inputs[main_input_name]) if args.include_inputs_for_metrics else None
 
@@ -879,6 +889,13 @@ class ADMMTrainer(Trainer):
                 xm.mark_step()
 
             # Update containers
+            if rem_losses is not None:
+                # rem_losses = self.gather_function((rem_losses.repeat(batch_size)))
+                # all_rem_losses.add(rem_losses)
+                # print(f"DEBUG: Rank {self.accelerator.process_index} - REM Loss before gather: {rem_losses.item()}")
+                gathered_rem_losses = self.gather_function((rem_losses.repeat(batch_size)))
+                # print(f"DEBUG: Rank {self.accelerator.process_index} - REM Loss after gather: {gathered_rem_losses}")
+                all_rem_losses.add(gathered_rem_losses)
             if losses is not None:
                 # losses = self.gather_function((losses.repeat(batch_size)))
                 # all_losses.add(losses)
@@ -927,6 +944,7 @@ class ADMMTrainer(Trainer):
 
             # Gather all tensors and put them back on the CPU if we have done enough accumulation steps.
             elif args.eval_accumulation_steps is not None and (step + 1) % args.eval_accumulation_steps == 0:
+                all_rem_losses.to_cpu_and_numpy()
                 all_losses.to_cpu_and_numpy()
                 all_preds.to_cpu_and_numpy()
                 all_labels.to_cpu_and_numpy()
@@ -942,6 +960,7 @@ class ADMMTrainer(Trainer):
             delattr(self, "_past")
 
         # Gather all remaining tensors and put them back on the CPU
+        all_rem_losses = all_rem_losses.get_arrays()
         all_losses = all_losses.get_arrays()
         all_preds = all_preds.get_arrays()
         all_labels = all_labels.get_arrays()
@@ -991,7 +1010,10 @@ class ADMMTrainer(Trainer):
 
         # To be JSON-serializable, we need to remove numpy types or zero-d tensors
         metrics = denumpify_detensorize(metrics)
-
+        if isinstance(all_rem_losses, list) and all_rem_losses:
+            metrics[f"{metric_key_prefix}_rem_loss"] = np.concatenate(all_rem_losses).mean().item()
+        elif isinstance(all_rem_losses, np.ndarray):
+            metrics[f"{metric_key_prefix}_rem_loss"] = all_rem_losses.mean().item()
         if isinstance(all_losses, list) and all_losses:
             metrics[f"{metric_key_prefix}_loss"] = np.concatenate(all_losses).mean().item()
         elif isinstance(all_losses, np.ndarray):
@@ -1133,19 +1155,18 @@ class ADMMTrainer(Trainer):
              last_hidden_state = last_hidden_state[:, :seq_len, :]
              target_labels_rem = target_labels_rem[:, :seq_len, :]
 
-        rem_loss = F.mse_loss(last_hidden_state, target_labels_rem)
-
+        rem_loss = F.mse_loss(last_hidden_state, target_labels_rem, reduction='mean')
         # --- Generate Standard Labels for Cross-Entropy/Perplexity ---
-        generated_labels = None
-        if 'input_ids' in inputs:
-            input_ids = inputs['input_ids']
-            generated_labels = input_ids.clone()
-            generated_labels[:, -1] = -100 # Mask last token
-        else:
-            logger.warning("Cannot generate standard labels for perplexity calculation as 'input_ids' are missing.")
+        # generated_labels = None
+        # if 'input_ids' in inputs:
+        #     input_ids = inputs['input_ids']
+        #     generated_labels = input_ids.clone()
+        #     generated_labels[:, -1] = -100 # Mask last token
+        # else:
+        #     logger.warning("Cannot generate standard labels for perplexity calculation as 'input_ids' are missing.")
 
         if return_outputs:
-            return rem_loss, outputs, generated_labels
+            return rem_loss, outputs
         else:
             return rem_loss
 
@@ -1155,21 +1176,18 @@ class ADMMTrainer(Trainer):
         """
         if self.args.loss_type == "rem":
             # --- Reconstruction Error Loss Calculation (with optional CE regularization) ---
-        
             # Always call the helper that returns logits and labels when return_outputs is needed
             # or when CE regularization is active (to calculate CE loss).
             if return_outputs:
                  # _compute_rem_loss_and_logits returns (rem_loss, outputs, generated_labels)
-                 rem_loss, outputs, generated_labels = self._compute_rem_loss_and_logits(model, inputs, return_outputs=True)
-                 logits = outputs.logits # Get logits from the outputs
-
-                 # --- FIX: Add generated_labels to outputs for prediction_step ---
-                 if hasattr(outputs, 'keys'): # Check if it's dict-like (e.g., ModelOutput)
-                      outputs["generated_labels_for_metrics"] = generated_labels
-                 else:
-                      logger.warning("Outputs object is not dict-like, cannot add generated_labels_for_metrics.")
-                 # --- END FIX ---
-                 return (rem_loss, outputs)
+                rem_loss, outputs = self._compute_rem_loss_and_logits(model, inputs, return_outputs=True)
+                #  logits = outputs.logits # Get logits from the outputs
+                #  # --- FIX: Add generated_labels to outputs for prediction_step ---
+                #  if hasattr(outputs, 'keys'): # Check if it's dict-like (e.g., ModelOutput)
+                #       outputs["generated_labels_for_metrics"] = generated_labels
+                #  else:
+                #       logger.warning("Outputs object is not dict-like, cannot add generated_labels_for_metrics.")
+                return rem_loss, outputs
             else: # return_outputs is False and ce_factor is 0.0
                  # Only REM loss is needed, and no outputs required
                 rem_loss = self._compute_rem_loss_and_logits(model, inputs, return_outputs=False)
@@ -1204,7 +1222,6 @@ class ADMMTrainer(Trainer):
         dp_world_size = args.world_size // self.get_tp_size()
         return self._train_batch_size * args.gradient_accumulation_steps * dp_world_size
 
-    ## TODO: implement multi-gpu support!
     def _inner_training_loop(
         self, batch_size=None, args=None, resume_from_checkpoint=None, trial=None, ignore_keys_for_eval=None
     ):

@@ -488,7 +488,7 @@ def calculate_reconstruction_error(
         return torch.nn.MSELoss()(inps_device.float(), outs_device.float()).cpu().item()
     
 @torch.no_grad()
-def compute_dense_outputs(dataset, model, args, device="cuda", dataset_type="train", batch_size=4):
+def compute_dense_outputs(dataset, model, args, device="cuda", dataset_type="train", batch_size=4, total_samples=128):
     """
     Compute and store hidden states from the dense model using hooks.
     Args:
@@ -497,6 +497,7 @@ def compute_dense_outputs(dataset, model, args, device="cuda", dataset_type="tra
         args: Training arguments
         device: Device to run the model on
         dataset_type: Type of dataset ('train' or 'validation')
+        total_samples: Total number of samples to process
     Returns:
         Tuple of (input_ids, hidden_states)
     """
@@ -521,7 +522,7 @@ def compute_dense_outputs(dataset, model, args, device="cuda", dataset_type="tra
             if (metadata.get('model_name') == args.model and
                 metadata.get('dataset_type') == dataset_type and
                 metadata.get('source_dataset') == args.dataset and
-                metadata.get('num_samples') == (args.admm_num_train_samples if dataset_type == "train" else args.admm_num_eval_samples) and
+                metadata.get('num_samples') == total_samples and
                 metadata.get('seqlen') == args.seqlen):
                 print(f"Loading cached {dataset_type} dense outputs...")
                 labels = torch.load(labels_file, weights_only=False)
@@ -561,10 +562,9 @@ def compute_dense_outputs(dataset, model, args, device="cuda", dataset_type="tra
         # Concatenate results
         all_hidden_states = torch.cat(all_hidden_states, dim=0)
         # Verify shapes
-        expected_samples = args.admm_num_train_samples if dataset_type == "train" else args.admm_num_eval_samples
-        assert len(dataset['input_ids']) == expected_samples, f"Expected {expected_samples} samples, got {len(dataset['input_ids'])}"
+        assert len(dataset['input_ids']) == total_samples, f"Expected {total_samples} samples, got {len(dataset['input_ids'])}"
         assert len(dataset['input_ids'][0]) == args.seqlen, f"Expected sequence length {args.seqlen}, got {len(dataset['input_ids'][0])}"
-        assert all_hidden_states.size(0) == expected_samples
+        assert all_hidden_states.size(0) == total_samples
         assert all_hidden_states.size(1) == args.seqlen
         # Save results
         print(f"Saving {dataset_type} dense outputs...")
@@ -574,7 +574,7 @@ def compute_dense_outputs(dataset, model, args, device="cuda", dataset_type="tra
             'model_name': args.model,
             'dataset_type': dataset_type,
             'source_dataset': args.dataset,
-            'num_samples': expected_samples,
+            'num_samples': total_samples,
             'seqlen': args.seqlen,
             'hidden_dim': all_hidden_states.size(-1),
             'created_at': datetime.now().isoformat(),

@@ -831,30 +831,15 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         data_path=FLAGS.data_path
     )
 
-    # --- On-the-fly REM Label Computation for Distributed Training ---
     if FLAGS.loss_type == "rem":
-        # Tensors to hold the labels, initialized to None on all processes
-        objects_to_broadcast = [None, None]
+        logging.info("Computing dense model outputs for REM loss...")
+        torch.cuda.empty_cache()
 
-        # Rank 0 computes the labels for the entire dataset
-        if admm_training_args.local_rank == 0:
-            logging.info("Rank 0: Computing dense model outputs for REM loss...")
-            torch.cuda.empty_cache()
+        # Compute labels and move them to CPU for broadcasting
+        train_labels_tensor = compute_dense_outputs(train_inputs, model, FLAGS, device=device, dataset_type="train", total_samples=num_train_samples).to("cpu")
+        valid_labels_tensor = compute_dense_outputs(valid_inputs, model, FLAGS, device=device, dataset_type="valid", total_samples=FLAGS.admm_num_eval_samples).to("cpu")
 
-            # Compute labels and move them to CPU for broadcasting
-            train_labels_tensor = compute_dense_outputs(train_inputs, model, FLAGS, device=device, dataset_type="train").to("cpu")
-            valid_labels_tensor = compute_dense_outputs(valid_inputs, model, FLAGS, device=device, dataset_type="valid").to("cpu")
-            
-            objects_to_broadcast = [train_labels_tensor, valid_labels_tensor]
-            logging.info("Rank 0: Finished computing REM labels. Broadcasting to other processes...")
-
-        # Synchronize all processes and broadcast the computed labels from rank 0
-        if admm_training_args.world_size > 1:
-            torch.distributed.barrier()  # Ensure rank 0 is done before others proceed
-            torch.distributed.broadcast_object_list(objects_to_broadcast, src=0)
-
-        # Unpack the broadcasted labels on all processes
-        train_labels_tensor, valid_labels_tensor = objects_to_broadcast
+        logging.info("Finished computing REM labels.")
 
         # Add the computed labels to the datasets
         if train_labels_tensor is not None and valid_labels_tensor is not None:
@@ -889,7 +874,6 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
     # 5. Start ADMM Training
     if admm_training_args.local_rank == 0:
         logging.info("Starting ADMM training on all processes...")
-    
     trainer.train()
     ## TODO: work in progress for GPA retrain
     # if trainer.is_fsdp_enabled:
