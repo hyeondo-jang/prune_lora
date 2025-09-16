@@ -808,6 +808,8 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         num_train_samples = FLAGS.admm_steps * FLAGS.admm_batch_size * FLAGS.admm_gradient_accumulation_steps * admm_training_args.world_size
     else:
         num_train_samples = FLAGS.admm_num_train_samples
+    if FLAGS.data_ablation:
+        num_train_samples = FLAGS.admm_num_train_samples
     # Ensure model's seqlen matches the one used for dataset processing
     model.seqlen = FLAGS.seqlen
     train_inputs = get_dataset(

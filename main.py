@@ -330,6 +330,7 @@ if __name__ == '__main__':
     flags.DEFINE_integer('admm_logging_steps', 1, 'Logging step interval for ADMM training.')
     flags.DEFINE_integer('admm_eval_steps', 1, 'Evaluation step interval for ADMM training.')
 
+    flags.DEFINE_bool('data_ablation', False, 'Whether to use data ablation, for section 5.5. If True, we fix the step size and control the number of train samples with --admm_num_train_samples.')
     flags.DEFINE_bool('calculate_global_recon', False, 'Whether to calculate global reconstruction error.')
     flags.DEFINE_bool('eval_zero_shot', True, 'Whether to evaluate zero-shot performance.')
     flags.DEFINE_bool('wandb', False, 'Whether to use wandb for logging.')
