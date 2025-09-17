@@ -867,12 +867,12 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
             train_labels_dataset = _as_array2d_dataset(
                 rem_np=train_labels_tensor.numpy(),  # already on CPU
                 seqlen=FLAGS.seqlen,
-                shard_size=1024
+                shard_size=32
             )
             valid_labels_dataset = _as_array2d_dataset(
                 rem_np=valid_labels_tensor.numpy(),
                 seqlen=FLAGS.seqlen,
-                shard_size=1024
+                shard_size=32
             )
 
             train_inputs = concatenate_datasets([train_inputs, train_labels_dataset], axis=1)
