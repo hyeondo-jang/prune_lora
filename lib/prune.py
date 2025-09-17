@@ -2,6 +2,8 @@ import time
 import torch
 import math 
 import torch.nn as nn
+from datasets import Dataset, Features, Array2D, concatenate_datasets
+import numpy as np
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.optimization import get_linear_schedule_with_warmup, AdamW
 from transformers.trainer_callback import EarlyStoppingCallback
@@ -10,6 +12,7 @@ from .pruner import WrappedGPT, ALPS_prune, SparseGPT
 from .data import get_loaders,get_dataset, TensorData,TensorDataLoader,TensorData, TensorDataLoader
 from .optimizers import SAFE, MaskedAdam
 from .utils import *
+from .utils import _as_array2d_dataset
 from .trainer import ADMMTrainer, Trainer
 # --- FIX: Import necessary dataset functions ---
 from datasets import Dataset, concatenate_datasets
@@ -837,23 +840,32 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         logging.info("Computing dense model outputs for REM loss...")
         torch.cuda.empty_cache()
 
-        # Compute labels and move them to CPU for broadcasting
-        train_labels_tensor = compute_dense_outputs(train_inputs, model, FLAGS, device=device, dataset_type="train", total_samples=num_train_samples).to("cpu")
-        valid_labels_tensor = compute_dense_outputs(valid_inputs, model, FLAGS, device=device, dataset_type="valid", total_samples=FLAGS.admm_num_eval_samples).to("cpu")
+        train_labels_tensor = compute_dense_outputs(
+            train_inputs, model, FLAGS, device=device,
+            dataset_type="train", total_samples=num_train_samples
+        ).to("cpu")
+        valid_labels_tensor = compute_dense_outputs(
+            valid_inputs, model, FLAGS, device=device,
+            dataset_type="valid", total_samples=FLAGS.admm_num_eval_samples
+        ).to("cpu")
 
         logging.info("Finished computing REM labels.")
 
-        # Add the computed labels to the datasets
         if train_labels_tensor is not None and valid_labels_tensor is not None:
-            train_labels_dataset = Dataset.from_dict({'rem_labels': train_labels_tensor.numpy()})
-            valid_labels_dataset = Dataset.from_dict({'rem_labels': valid_labels_tensor.numpy()})
+            train_labels_dataset, train_shape = _as_array2d_dataset(
+                train_labels_tensor, FLAGS.seqlen, writer_bs=32
+            )
+            valid_labels_dataset, valid_shape = _as_array2d_dataset(
+                valid_labels_tensor, FLAGS.seqlen, writer_bs=32
+            )
+            assert train_shape == valid_shape, f"label shape mismatch: train {train_shape}, valid {valid_shape}"
 
             train_inputs = concatenate_datasets([train_inputs, train_labels_dataset], axis=1)
             valid_inputs = concatenate_datasets([valid_inputs, valid_labels_dataset], axis=1)
-            
+
             if admm_training_args.local_rank == 0:
-                logging.info("REM labels computed and added to datasets on all processes.")
-    
+                logging.info(f"REM labels added. Per-row shape stored as: {train_shape}")
+
     if admm_training_args.local_rank == 0:
         logging.info(f"ADMM Datasets prepared: Train size {len(train_inputs)}, Valid size {len(valid_inputs)}")
 

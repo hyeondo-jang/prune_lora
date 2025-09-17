@@ -9,6 +9,8 @@ from typing import Optional, List, Tuple, Literal, Union
 import enum
 from dataclasses import dataclass
 from transformers.trainer_callback import TrainerCallback
+from datasets import Dataset, Features, Array2D
+import numpy as np
 
 class ADMMEarlyStoppingCallback(TrainerCallback):
     def __init__(self, patience: int, threshold: float):
@@ -30,6 +32,37 @@ class ADMMEarlyStoppingCallback(TrainerCallback):
             if self.early_stop_counter >= self.patience:
                 control.should_training_stop = True
                 logger.info(f"Early stopping triggered: {self.early_stop_counter}/{self.patience}")
+
+
+def _to_np_f32(x: torch.Tensor) -> np.ndarray:
+    if x.dtype == torch.bfloat16:
+        return x.float().cpu().numpy()
+    return x.detach().cpu().to(torch.float32).numpy()
+
+def _as_array2d_dataset(rem_tensor: torch.Tensor, seqlen: int, writer_bs: int = 32):
+    """
+    rem_tensor: (N, S) or (N, T, H) torch tensor
+    Returns: (ds, shape_info) where shape_info = (S,) or (T, H)
+    """
+    arr = _to_np_f32(rem_tensor)           # numpy float32
+    assert arr.ndim in (2, 3), f"rem_labels must be 2D/3D, got {arr.shape}"
+
+    if arr.ndim == 2:
+        N, S = arr.shape
+        features = Features({"rem_labels": Array2D(shape=(S,), dtype="float32")})
+        payload = {"rem_labels": [arr[i] for i in range(N)]}   # row-by-row
+        ds = Dataset.from_dict(payload, features=features, writer_batch_size=writer_bs)
+        shape_info = (S,)
+    else:
+        N, T, H = arr.shape
+        assert T == seqlen, f"seqlen mismatch: labels T={T}, expected {seqlen}"
+        arr2 = arr.reshape(N, T * H)
+        features = Features({"rem_labels": Array2D(shape=(T * H,), dtype="float32")})
+        payload = {"rem_labels": [arr2[i] for i in range(N)]}
+        ds = Dataset.from_dict(payload, features=features, writer_batch_size=writer_bs)
+        shape_info = (T, H)
+
+    return ds, shape_info
 
 def get_llm(
     model_name:str, 
@@ -567,20 +600,20 @@ def compute_dense_outputs(dataset, model, args, device="cuda", dataset_type="tra
         assert all_hidden_states.size(0) == total_samples
         assert all_hidden_states.size(1) == args.seqlen
         # Save results
-        print(f"Saving {dataset_type} dense outputs...")
-        torch.save(all_hidden_states, labels_file)
-        # Save metadata
-        metadata = {
-            'model_name': args.model,
-            'dataset_type': dataset_type,
-            'source_dataset': args.dataset,
-            'num_samples': total_samples,
-            'seqlen': args.seqlen,
-            'hidden_dim': all_hidden_states.size(-1),
-            'created_at': datetime.now().isoformat(),
-        }
-        with open(metadata_file, 'w') as f:
-            json.dump(metadata, f, indent=2)
+        # print(f"Saving {dataset_type} dense outputs...")
+        # torch.save(all_hidden_states, labels_file)
+        # # Save metadata
+        # metadata = {
+        #     'model_name': args.model,
+        #     'dataset_type': dataset_type,
+        #     'source_dataset': args.dataset,
+        #     'num_samples': total_samples,
+        #     'seqlen': args.seqlen,
+        #     'hidden_dim': all_hidden_states.size(-1),
+        #     'created_at': datetime.now().isoformat(),
+        # }
+        # with open(metadata_file, 'w') as f:
+        #     json.dump(metadata, f, indent=2)
         return all_hidden_states
     finally:
         # Clean up hook
