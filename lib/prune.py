@@ -843,28 +843,45 @@ def globalprune_admm(FLAGS, model, tokenizer, device, prune_n=0, prune_m=0):
         train_labels_tensor = compute_dense_outputs(
             train_inputs, model, FLAGS, device=device,
             dataset_type="train", total_samples=num_train_samples
-        ).to("cpu")
+        ).to("cpu")  # (N_train, S, H)
+
         valid_labels_tensor = compute_dense_outputs(
             valid_inputs, model, FLAGS, device=device,
             dataset_type="valid", total_samples=FLAGS.admm_num_eval_samples
-        ).to("cpu")
+        ).to("cpu")  # (N_valid, S, H)
 
         logging.info("Finished computing REM labels.")
 
         if train_labels_tensor is not None and valid_labels_tensor is not None:
-            train_labels_dataset, train_shape = _as_array2d_dataset(
-                train_labels_tensor, FLAGS.seqlen, writer_bs=32
+        
+            assert train_labels_tensor.dim() == 3, f"train_labels dim expected 3, got {train_labels_tensor.shape}"
+            assert valid_labels_tensor.dim() == 3, f"valid_labels dim expected 3, got {valid_labels_tensor.shape}"
+            Nt, St, Ht = train_labels_tensor.shape
+            Nv, Sv, Hv = valid_labels_tensor.shape
+            assert St == FLAGS.seqlen and Sv == FLAGS.seqlen, \
+                f"seqlen mismatch: train S={St}, valid S={Sv}, expected {FLAGS.seqlen}"
+            assert Ht == Hv, f"hidden dim mismatch: train H={Ht}, valid H={Hv}"
+            train_shape = (FLAGS.seqlen, Ht)
+            valid_shape = (FLAGS.seqlen, Hv)
+
+            train_labels_dataset = _as_array2d_dataset(
+                rem_np=train_labels_tensor.numpy(),  # already on CPU
+                seqlen=FLAGS.seqlen,
+                shard_size=1024
             )
-            valid_labels_dataset, valid_shape = _as_array2d_dataset(
-                valid_labels_tensor, FLAGS.seqlen, writer_bs=32
+            valid_labels_dataset = _as_array2d_dataset(
+                rem_np=valid_labels_tensor.numpy(),
+                seqlen=FLAGS.seqlen,
+                shard_size=1024
             )
-            assert train_shape == valid_shape, f"label shape mismatch: train {train_shape}, valid {valid_shape}"
 
             train_inputs = concatenate_datasets([train_inputs, train_labels_dataset], axis=1)
             valid_inputs = concatenate_datasets([valid_inputs, valid_labels_dataset], axis=1)
 
+            assert train_shape == valid_shape, f"label shape mismatch: train {train_shape}, valid {valid_shape}"
             if admm_training_args.local_rank == 0:
                 logging.info(f"REM labels added. Per-row shape stored as: {train_shape}")
+
 
     if admm_training_args.local_rank == 0:
         logging.info(f"ADMM Datasets prepared: Train size {len(train_inputs)}, Valid size {len(valid_inputs)}")

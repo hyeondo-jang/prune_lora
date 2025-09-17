@@ -9,7 +9,7 @@ from typing import Optional, List, Tuple, Literal, Union
 import enum
 from dataclasses import dataclass
 from transformers.trainer_callback import TrainerCallback
-from datasets import Dataset, Features, Array2D
+from datasets import Dataset, Features, Array2D, concatenate_datasets
 import numpy as np
 
 class ADMMEarlyStoppingCallback(TrainerCallback):
@@ -39,30 +39,31 @@ def _to_np_f32(x: torch.Tensor) -> np.ndarray:
         return x.float().cpu().numpy()
     return x.detach().cpu().to(torch.float32).numpy()
 
-def _as_array2d_dataset(rem_tensor: torch.Tensor, seqlen: int, writer_bs: int = 32):
+def _as_array2d_dataset(rem_np: np.ndarray, seqlen: int, shard_size: int = 1024) -> Dataset:
     """
-    rem_tensor: (N, S) or (N, T, H) torch tensor
-    Returns: (ds, shape_info) where shape_info = (S,) or (T, H)
+    rem_np: (N, S, H) numpy array (will be cast to float32 if needed)
+    seqlen: sequence length S
+    shard_size: number of samples per shard
+
+    Returns:
+        HuggingFace Dataset with a single column "rem_labels" where each row has shape (seqlen, hidden_dim).
+        Shards are concatenated to avoid Arrow 2GB/offset issues.
     """
-    arr = _to_np_f32(rem_tensor)           # numpy float32
-    assert arr.ndim in (2, 3), f"rem_labels must be 2D/3D, got {arr.shape}"
+    assert rem_np.ndim == 3, f"rem_np must be 3D (N, S, H), got {rem_np.shape}"
+    N, S, H = rem_np.shape
+    assert S == seqlen, f"seqlen mismatch: got array S={S}, expected seqlen={seqlen}"
 
-    if arr.ndim == 2:
-        N, S = arr.shape
-        features = Features({"rem_labels": Array2D(shape=(S,), dtype="float32")})
-        payload = {"rem_labels": [arr[i] for i in range(N)]}   # row-by-row
-        ds = Dataset.from_dict(payload, features=features, writer_batch_size=writer_bs)
-        shape_info = (S,)
-    else:
-        N, T, H = arr.shape
-        assert T == seqlen, f"seqlen mismatch: labels T={T}, expected {seqlen}"
-        arr2 = arr.reshape(N, T * H)
-        features = Features({"rem_labels": Array2D(shape=(T * H,), dtype="float32")})
-        payload = {"rem_labels": [arr2[i] for i in range(N)]}
-        ds = Dataset.from_dict(payload, features=features, writer_batch_size=writer_bs)
-        shape_info = (T, H)
+    features = Features({"rem_labels": Array2D(shape=(seqlen, H), dtype="float32")})
 
-    return ds, shape_info
+    shards = []
+    for i in range(0, N, shard_size):
+        j = min(i + shard_size, N)
+        part = rem_np[i:j]  # (M, S, H)
+        rows = [np.ascontiguousarray(part[k]) for k in range(part.shape[0])]  # each (S, H)
+        ds = Dataset.from_dict({"rem_labels": rows}, features=features)
+        shards.append(ds)
+
+    return shards[0] if len(shards) == 1 else concatenate_datasets(shards, axis=0)
 
 def get_llm(
     model_name:str, 
