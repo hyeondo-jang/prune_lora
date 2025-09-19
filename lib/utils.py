@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from transformers.trainer_callback import TrainerCallback
 from datasets import Dataset, Features, Array2D, concatenate_datasets
 import numpy as np
-
+from torchao.optim.subclass_8bit import OptimState8bit
+from torchao.optim.subclass_4bit import OptimState4bit
 class ADMMEarlyStoppingCallback(TrainerCallback):
     def __init__(self, patience: int, threshold: float):
         self.patience = patience
@@ -124,6 +125,11 @@ def _proj_impl_dense(
     new_z = weight.detach().clone()
 
     if a is not None:
+        if isinstance(a,OptimState8bit):
+            a = a.dequantize()
+        elif isinstance(a,OptimState4bit):
+            a = a.dequantize()
+        
         if is_direct_score:
             z_metric = a
         else:
@@ -201,7 +207,6 @@ def projection(
     out: List[torch.Tensor] = []
     for i, weight in enumerate(w):
         a = importance_matrix[i] if use_a else None
-
         if isinstance(weight, DTensor):
             # Always replicate DTensor to a dense tensor for projection
             mesh = weight.device_mesh
@@ -209,7 +214,6 @@ def projection(
             
             dense_w = _as_dense_a(weight)
             dense_a = _as_dense_a(a)
-
             new_dense = _proj_impl_dense(dense_w, dense_a, sparsity, prune_n, prune_m, comparison_group, is_direct_score)
             
             # Redistribute the result back to the original sharding
