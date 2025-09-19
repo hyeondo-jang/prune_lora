@@ -509,7 +509,7 @@ class ADMMTrainer(Trainer):
                     mu=self.args.admm_mu, 
                     tau_incr=self.args.admm_tau_incr, 
                     tau_decr=self.args.admm_tau_decr,
-                    lr=self.args.learning_rate, 
+                    lr=float(self.args.learning_rate), 
                     prune_n=self.args.prune_n, 
                     prune_m=self.args.prune_m, 
                     comparison_group=self.args.admm_projection_comparison_group,
