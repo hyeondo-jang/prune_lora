@@ -308,10 +308,10 @@ if __name__ == '__main__':
     flags.DEFINE_bool('normalize_grad', False, 'Whether to normalize gradients during ADMM training. Note that gradient normalization is only performed with respect to the gradients of the training objective.')
     flags.DEFINE_bool('normalize_prox_grad', False, 'Whether to normalize the proximal gradient in ADMM.')
     flags.DEFINE_bool('mean_prox_grad',False, 'mean proximal grad for scale invariance')
-    flags.DEFINE_bool('admm_adaptive_sparsity', False, 'Whether to use adaptive sparsity based on sensitivity scores in ADMM.')
-    flags.DEFINE_integer('admm_adaptive_sparsity_samples', 32, 'Whether to use adaptive sparsity based on sensitivity scores in ADMM.')
-    flags.DEFINE_bool('admm_adaptive_sparsity_smooth', False, 'Whether to smooth the adaptive sparsity scores in ADMM.')
-    flags.DEFINE_float('admm_adaptive_sparsity_smooth_temperature', 2, 'Alpha for smoothing the adaptive sparsity scores in ADMM.')
+    flags.DEFINE_bool('admm_nonuniform_sparsity', False, 'Whether to use non-uniform sparsity based on sensitivity scores in ADMM.')
+    flags.DEFINE_string('admm_nonuniform_sparsity_config_file', None, 'Path to non-uniform sparsity configuration file (JSON format).')
+    
+    
 
     # ADMM early stop
     flags.DEFINE_bool('admm_early_stop', False, 'Whether to use early stopping during ADMM training.')

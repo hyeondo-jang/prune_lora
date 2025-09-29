@@ -195,117 +195,101 @@ class ADMMTrainer(Trainer):
         self.is_tp_enabled = getattr(self.accelerator.state, "torch_tp_plugin", None) is not None
         self.sparsity_scheduler = None
 
-    def allocate_nonuniform_sparsity(self): ## TODO: FIX this
+    def allocate_nonuniform_sparsity(self):
         """
-        Calculates and allocates non-uniform sparsity directly to the optimizer state.
-        This version relies solely on parameter names for identification, ensuring
-        compatibility with advanced distributed strategies like FSDP.
+        Calculates and allocates non-uniform sparsity based on a config file.
+        The formula `sparsity = base + k * (1M / layer_weights)` is applied per layer.
+        This method is FSDP-compatible as it relies on parameter names.
         """
-        if not hasattr(self, "admm_param_names") or not self.admm_param_names:
-            logger.warning("`admm_param_names` not found on trainer. Skipping adaptive sparsity allocation.")
+        config_file = getattr(self.args, 'nonuniform_sparsity_config_file', None)
+        if not config_file:
+            logger.warning("`nonuniform_sparsity_config_file` not provided. Skipping non-uniform sparsity allocation.")
+            return
+
+        if not os.path.exists(config_file):
+            logger.error(f"Sparsity config file not found at {config_file}. Aborting non-uniform allocation.")
             return
 
         if self.is_world_process_zero():
-            logger.info(f'Calculating adaptive sparsity based on {self.args.admm_adaptive_sparsity_samples} samples...')
+            logger.info(f"Allocating non-uniform sparsity from config file: {config_file}")
 
-        # --- Step 1: Accumulate gradients ---
-        train_dataloader = self.get_train_dataloader()
-        samples_processed = 0
-        batch_size = self.args.per_device_train_batch_size
-        num_batches_needed = max(1, self.args.admm_adaptive_sparsity_samples // batch_size)
-        
-        batches_processed = 0
-        for batch_idx, batch in enumerate(train_dataloader):
-            self.training_step(self.model, self._prepare_inputs(batch))
-            batches_processed += 1
+        # --- Step 1: Parse the sparsity config file ---
+        layer_levels = {}
+        try:
+            with open(config_file, 'r') as f:
+                for line in f:
+                    if not line.strip() or ':' not in line: continue
+                    name, level = line.strip().split(':', 1)
+                    layer_levels[name.strip()] = int(level.strip())
+        except Exception as e:
+            logger.error(f"Error parsing sparsity config file {config_file}: {e}")
+            return
 
-        # --- Step 2: Calculate block-level sensitivity scores using parameter names ---
-        if self.is_world_process_zero():
-            logger.info("--- Analyzing gradient sensitivity for adaptive sparsity ---")
-        num_layers = self.model.config.num_hidden_layers
-        block_scores = {i: {'score': 0.0, 'num_params': 0} for i in range(num_layers)}
+        # --- Step 2: Calculate sparsity for each layer based on its own weight count ---
         unwrapped_model = unwrap_model(self.model)
-
+        base_sparsity = self.args.sparsity_ratio
+        layer_sparsities = {}
+        
+        # Create a map from a "normalized" module name to the actual parameter object.
+        # This handles wrappers like `_checkpoint_wrapped_module`.
+        normalized_param_map = {}
         for name, param in unwrapped_model.named_parameters():
-            # Use parameter name for identification, not id(param)
-            if not param.requires_grad or param.grad is None or name not in self.admm_param_names:
-                continue
-            
-            match = re.search(r'\.layers\.(\d+)\.', name)
-            if not match: continue
-            
-            layer_idx = int(match.group(1))
-            if layer_idx not in block_scores: continue
-
-            grad_data = param.grad.detach().cpu().abs()
-            if batches_processed > 1: grad_data.div_(batches_processed)
-            
-            sensitivity = (grad_data * param.data.detach().cpu().abs()).mean()
-            block_scores[layer_idx]['score'] += sensitivity
-            block_scores[layer_idx]['num_params'] += 1
-
-        avg_block_scores = {i: data['score'] / data['num_params'] if data['num_params'] > 0 else 0.0 for i, data in block_scores.items()}
-
-        # --- Step 3: Distribute target sparsity based on scores ---
-        scores_tensor = torch.tensor(list(avg_block_scores.values()), device='cpu')
-        target_sparsity = self.args.sparsity_ratio
-        final_block_sparsity = {}
-        if scores_tensor.sum() == 0:
-            logger.warning("All sensitivity scores are zero. Falling back to uniform sparsity.")
-            final_block_sparsity = {i: target_sparsity for i in range(num_layers)}
-        else:
-            inverted_scores = 1.0 / (scores_tensor + 1e-12)
-            normalized_scores = inverted_scores / inverted_scores.sum()
-            block_sparsities_tensor = target_sparsity * len(scores_tensor) * normalized_scores
-            final_block_sparsity = {i: min(0.99, max(0.0, block_sparsities_tensor[i].item())) for i in range(len(block_sparsities_tensor))}
-
-        # --- Step 4: Update optimizer state by iterating through model parameters ---
+            # Normalize the name by removing wrapper prefixes
+            normalized_name = name.replace('._checkpoint_wrapped_module', '')
+            normalized_param_map[normalized_name] = param
+        # dist.breakpoint()
+        for module_name, level in layer_levels.items():
+            param_name = f"{module_name}.weight"
+            if param_name in normalized_param_map:
+                param = normalized_param_map[param_name]
+                # Use math.prod(param.shape) for FSDP/DTensor compatibility
+                layer_weights = math.prod(param.shape)
+                if layer_weights > 0:
+                    # Formula: sparsity = base_sparsity + k * (10^6 / layer_weights)
+                    sparsity = base_sparsity + level * (1e6 / layer_weights)
+                    layer_sparsities[module_name] = min(0.99, max(0.0, sparsity))
+                else:
+                    layer_sparsities[module_name] = base_sparsity
+            else:
+                 if self.is_world_process_zero():
+                    logger.warning(f"Module '{module_name}' from config not found in model parameters. Skipping.")
+        # --- Step 3: Update optimizer state ---
         unwrapped_optimizer = self.optimizer.optimizer if hasattr(self.optimizer, 'optimizer') else self.optimizer
         
         if self.is_world_process_zero():
-            logger.info("Allocating adaptive sparsities to optimizer state...")
+            logger.info("Applying non-uniform sparsities to optimizer state...")
 
-        # Iterate through the model's parameters again to update state
+        param_to_group = {id(p): g for g in unwrapped_optimizer.param_groups for p in g['params']}
+
+        updated_params = 0
         for name, param in unwrapped_model.named_parameters():
-            # Use name to check if the parameter is part of the ADMM group
-            if name not in self.admm_param_names:
-                continue
-            
-            # Ensure the state is initialized before updating
-            unwrapped_optimizer._lazy_init_admm_state(param)
+            normalized_name = name.replace('._checkpoint_wrapped_module', '')
+            if normalized_name in self.admm_param_names:
+                module_name = normalized_name.replace('.weight', '')
+                new_sparsity = layer_sparsities.get(module_name, base_sparsity)
+                
+                param_group = param_to_group.get(id(param))
+                if param_group is None:
+                    if self.is_world_process_zero():
+                        logger.warning(f"Could not find optimizer parameter group for {name}. Skipping state update.")
+                    continue
+                                
+                # Ensure the state is initialized before updating, now with the correct group
+                unwrapped_optimizer._lazy_init_admm_state(param, param_group)
+                
+                if unwrapped_optimizer.state[param]['sparsity'] != new_sparsity:
+                    unwrapped_optimizer.state[param]['sparsity'] = new_sparsity
+                    updated_params += 1
 
-            match = re.search(r'\.layers\.(\d+)\.', name)
-            if match:
-                layer_idx = int(match.group(1))
-                new_sparsity = final_block_sparsity.get(layer_idx, unwrapped_optimizer.sparsity)
-                unwrapped_optimizer.state[param]['sparsity'] = new_sparsity
-            else:
-                unwrapped_optimizer.state[param]['sparsity'] = unwrapped_optimizer.sparsity
-
-        # --- Step 5: Logging and cleanup ---
-        if self.is_world_process_zero() and final_block_sparsity:
-            logger.info("Finished allocating adaptive sparsities.")
-            sorted_blocks = sorted(final_block_sparsity.items())
-            sparsity_table = wandb.Table(columns=["Block Index", "Allocated Sparsity", "Average Score"])
-            
-            for layer_idx, sparsity in sorted_blocks:
-                score = avg_block_scores.get(layer_idx, 0.0)
-                logger.info(f"  - Block {layer_idx:02d} allocated sparsity: {sparsity:.4f}, score: {score:.4e}")
-                sparsity_table.add_data(f"Block {layer_idx:02d}", sparsity, score)
-            
-            if self.args.wandb and self.is_world_process_zero():
-                wandb.log({
-                    "adaptive_sparsity_chart": wandb.plot.bar(sparsity_table, "Block Index", "Allocated Sparsity", title="Allocated Sparsity per Block"),
-                    "adaptive_score_chart": wandb.plot.bar(sparsity_table, "Block Index", "Average Score", title="Average Sensitivity Score per Block")
-                }, step=self.state.global_step)
-
-            wandb_metrics = {f"adaptive_sparsity/block_{idx:02d}": sparsity for idx, sparsity in final_block_sparsity.items()}
-            if self.is_world_process_zero():
-                self.log(wandb_metrics)
-        
-        # Clean up gradients and memory
-        self.model.zero_grad(set_to_none=True)
-        torch.cuda.empty_cache()
+        if self.is_world_process_zero():
+            logger.info(f"Finished applying non-uniform sparsity to {updated_params} parameter groups.")
+            if self.args.wandb:
+                sparsity_table = wandb.Table(columns=["Layer Name", "Level", "Allocated Sparsity"])
+                for name, sparsity in sorted(layer_sparsities.items()):
+                    level = layer_levels.get(name, 'N/A')
+                    sparsity_table.add_data(name, level, sparsity)
+                    logger.info(f"  - Layer {name}: Level {level}, Sparsity {sparsity:.4f}")
+                wandb.log({"non_uniform_sparsity_allocation": sparsity_table}, step=self.state.global_step)
 
     def create_accelerator_and_postprocess(self):
         grad_acc_kwargs = {}
@@ -559,8 +543,8 @@ class ADMMTrainer(Trainer):
             )
             self._created_lr_scheduler = True
         if self.sparsity_scheduler is None:
-            if self.args.admm_adaptive_sparsity:
-                NotImplementedError("Adaptive sparsity-aware scheduling is not implemented yet.")
+            # if self.args.admm_adaptive_sparsity:
+            #     NotImplementedError("Adaptive sparsity-aware scheduling is not implemented yet.")
             self.sparsity_scheduler = SparsityScheduler(
                 optimizer=self.optimizer,
                 initial_sparsity= 0.0,
@@ -1373,7 +1357,7 @@ class ADMMTrainer(Trainer):
         self._load_optimizer_and_scheduler(resume_from_checkpoint)
         # self._load_scaler(resume_from_checkpoint)
         # self._load_admm_extra_vars(resume_from_checkpoint) # Keep disabled
-        if self.args.admm_adaptive_sparsity:
+        if self.args.admm_nonuniform_sparsity:
             self.allocate_nonuniform_sparsity()
 
         if self.is_world_process_zero():
