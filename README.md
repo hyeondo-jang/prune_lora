@@ -1,13 +1,17 @@
-# Towards Extremely Sparse Large Language Models
-Offical codebase for paper "Towards Extremely Sparse Large Language Models" (work in progress)
+# ELSA: Extreme LLM Sparsity via surrogate-free ADMM
+Offical codebase for paper "The Unseen Frontier: Pushing the Limits of\\LLM Sparsity with Surrogate-Free ADMM" 
+
+Authors: Kwanhee Lee, Hyeondo Jang, Dongyeop Lee, Dan Alistarh, Namhoon Lee
+
+### TL;DR: We achieve extreme LLM sparsity (90%) via surrogate-free constrained optimization!
 
 
 ### 1. Setup
 
 #### Venv setup
 ```bash
-conda create -n gpa --python=3.10
-conda activate gpa
+conda create -n elsa --python=3.10
+conda activate elsa
 pip install -r requirements.txt
 ```
 
@@ -37,9 +41,9 @@ python main.py \
     --seed=0
 ```
 
-We support [dense,sparsegpt,wanda,safe] for baseline experiment
+We support `[dense,sparsegpt,wanda,safe]` for baseline experiment
 
-#### GPA
+#### ELSA
 ```bash
 python main.py \
     --model="google/gemma-2-2b" \
@@ -70,6 +74,8 @@ accelerate config
 ```
 This will guide you through setting up your distributed training environment. Make sure to choose FSDP (`Fully Sharded Data Parallel`) when prompted, as the training pipeline is optimized for it.
 
+Configurations used for our paper can be found at `/configs`.
+
 #### Launching
 Once configured, you can launch the training script using `accelerate launch`:
 
@@ -88,7 +94,7 @@ accelerate launch main.py \
 ### 6. Configs
 
 #### Model
-- `--model`: Model to prune (예: "google/gemma-2-2b", "meta-llama/Llama-2-7b-hf")
+- `--model`: Model to prune (e.g.: "google/gemma-2-2b", "meta-llama/Llama-2-7b-hf")
 - `--seqlen`: Context length (default: 2048)
 
 #### Pruning
