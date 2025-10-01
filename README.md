@@ -1,4 +1,4 @@
-# ELSA: Extreme LLM Sparsity via surrogate-free ADMM
+# ❄️👸🏼 ELSA: Extreme LLM Sparsity via surrogate-free ADMM
 
 This repository provides the official codebase for our paper:
 
