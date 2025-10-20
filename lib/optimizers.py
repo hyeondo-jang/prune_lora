@@ -10,7 +10,7 @@ from torch.distributed.tensor import DTensor, Replicate
 import math
 
 # Import base optimizers
-from torch.optim import Adam, SGD
+from torch.optim import Adam, AdamW, SGD
 from torch.optim.optimizer import _get_scalar_dtype, _device_dtype_check_for_fused
 from torchao.optim import Adam8bit,Adam4bit
 # from adam_mini import AdamMini # Example for Adam-Mini
@@ -30,10 +30,12 @@ def get_admm_optimizer(base_optimizer_cls):
     This preserves the single-class structure required for FSDP compatibility.
     """
     base_optimizer_cls = base_optimizer_cls.lower()
-    if base_optimizer_cls not in ['adam', 'adam8bit', 'adam4bit', 'sgd']:
-        raise ValueError("base_optimizer_cls must be one of 'adam', 'adam8bit', 'adam4bit', or 'sgd'.")
+    if base_optimizer_cls not in ['adam', 'adamw', 'adam8bit', 'adam4bit', 'sgd']:
+        raise ValueError("base_optimizer_cls must be one of 'adam', 'adamw', 'adam8bit', 'adam4bit', or 'sgd'.")
     if base_optimizer_cls == 'adam':
         base_optimizer_cls = Adam
+    elif base_optimizer_cls == 'adamw':
+        base_optimizer_cls = AdamW
     elif base_optimizer_cls == 'adam8bit':
         base_optimizer_cls = Adam8bit
     elif base_optimizer_cls == 'adam4bit':

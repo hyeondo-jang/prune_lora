@@ -449,7 +449,7 @@ class ADMMTrainer(Trainer):
                 logger.info(f'Found {len(admm_param_list)} / {len([p for p in opt_model.parameters()])} parameters for ADMM/SAFE.')
             
             # Base optimizer for ADMM (not for SAFE, as SAFE uses SAM which has its own base)
-            if self.args.base_optimizer_type in ['adam', 'adam8bit','adam4bit']:
+            if self.args.base_optimizer_type in ['adam','adamw','adam8bit','adam4bit']:
                 base_optimizer_kwargs = {
                     'betas': (self.args.admm_beta1, self.args.admm_beta2),
                     'weight_decay': self.args.weight_decay
@@ -1678,7 +1678,7 @@ class ADMMTrainer(Trainer):
             logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
             logger.info(f'  Gradient Checkpointing = {args.gradient_checkpointing}')
             logger.info(f"  Total optimization steps = {max_steps}")
-            logger.info(f"  ADMM Optimizer Args: lmda={args.admm_lmda}, interval={args.admm_interval}, sparsity={args.sparsity_ratio}")
+            logger.info(f"  ADMM Optimizer Args: lmda={args.admm_lmda}, interval={args.admm_interval}, sparsity={args.sparsity_ratio}, weight_decay={args.weight_decay}")
             logger.info(f"  Loss Type = {self.args.loss_type}")
             logger.info(f'  ADMM Penalty Scheduler = {args.admm_lmda_schedule_mode}')
             logger.info(f'  ADMM Sparsity Scheduler = {args.admm_sparsity_schedule_mode}')
