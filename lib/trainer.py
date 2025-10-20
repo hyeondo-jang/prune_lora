@@ -709,67 +709,101 @@ class ADMMTrainer(Trainer):
         #      logger.debug(f"[prediction_step] Eval {loss_key}: {loss.item():.4f}")
 
         # return final_output
-
-    def evaluate(
+    
+    @torch.no_grad()
+    def _evaluate_sparse_model(
         self,
-        eval_dataset: Optional[Dataset] = None,
+        dataloader: DataLoader,
+        description: str,
+        prediction_loss_only: Optional[bool] = None,
         ignore_keys: Optional[List[str]] = None,
-        metric_key_prefix: str = "eval",
-    ) -> Dict[str, float]:
+        metric_key_prefix: str = "eval_sparse",
+    ) -> EvalLoopOutput:
         """
-        Run evaluation and returns metrics. Standard implementation.
+        Evaluates the sparse model by temporarily applying final_projection,
+        then restoring the dense weights. Handles FSDP2 sharding and stores
+        dense weights on CPU for memory efficiency.
         """
-        override = eval_dataset is not None
-        eval_dataset = eval_dataset if override else self.eval_dataset
-        if isinstance(eval_dataset, dict):
-            metrics = {}
-            for eval_dataset_name, _eval_dataset in eval_dataset.items():
-                dataset_metrics = self.evaluate(
-                    eval_dataset=_eval_dataset if override else eval_dataset_name,
-                    ignore_keys=ignore_keys,
-                    metric_key_prefix=f"{metric_key_prefix}_{eval_dataset_name}",
-                )
-                metrics.update(dataset_metrics)
-            return metrics
-        # memory metrics - must set up as early as possible
-        self._memory_tracker.start()
+        unwrapped_model = unwrap_model(self.model)
+        unwrapped_optimizer = self.optimizer.optimizer if hasattr(self.optimizer, 'optimizer') else self.optimizer
+        
+        # Save dense state on CPU - only ADMM parameters to save memory
+        dense_state = {}
+        admm_param_ids = {id(p) for group in unwrapped_optimizer.param_groups 
+                          if group.get('admm', False) for p in group['params']}
+        
+        if self.is_world_process_zero():
+            logger.info("Saving dense weights to CPU for sparse evaluation...")
+        
+        for name, param in unwrapped_model.named_parameters():
+            if id(param) in admm_param_ids:
+                # Handle both regular tensors and DTensors
+                if self._is_dtensor(param):
+                    # For DTensor, get local shard and move to CPU
+                    dense_state[name] = param.to_local().detach().cpu().clone()
+                else:
+                    # For regular tensor, move to CPU
+                    dense_state[name] = param.detach().cpu().clone()
+        
+        if self.is_world_process_zero():
+            # Log memory usage for debugging
+            total_size_mb = sum(v.numel() * v.element_size() / (1024**2) for v in dense_state.values())
+            logger.info(f"Dense weights saved on CPU: {total_size_mb:.2f} MB")
+        
+        try:
+            # Apply sparsity projection
+            unwrapped_optimizer.final_projection()
 
-        eval_dataloader = self.get_eval_dataloader(eval_dataset)
-        if self.is_fsdp_xla_v2_enabled:
-            eval_dataloader = tpu_spmd_dataloader(eval_dataloader)
-
-        start_time = time.time()
-
-        eval_loop = self.prediction_loop if self.args.use_legacy_prediction_loop else self.evaluation_loop
-        # Call evaluation_loop which uses self.prediction_step internally
-        output = eval_loop(
-            eval_dataloader,
-            description="Evaluation",
-            # Defer prediction_loss_only decision based on compute_metrics
-            # prediction_loss_only=True if self.compute_metrics is None else None,
-            prediction_loss_only=False,
-            ignore_keys=ignore_keys,
-            metric_key_prefix=metric_key_prefix,
-        )
-
-        total_batch_size = self.args.eval_batch_size * self.args.world_size
-        if f"{metric_key_prefix}_jit_compilation_time" in output.metrics:
-            start_time += output.metrics[f"{metric_key_prefix}_jit_compilation_time"]
-        output.metrics.update(
-            speed_metrics(
-                metric_key_prefix,
-                start_time,
-                num_samples=output.num_samples,
-                num_steps=math.ceil(output.num_samples / total_batch_size),
+            if self.is_world_process_zero():
+                logger.info(f"Sparse projection applied for {description}")
+            
+            # Synchronize all processes before evaluation
+            if self.args.world_size > 1 and dist.is_initialized():
+                dist.barrier()
+            
+            # Set flag to skip residual calculation for sparse evaluation
+            self._skip_residual_calculation = True
+            
+            # Evaluate sparse model using _evaluation_loop_impl
+            sparse_output = self._evaluation_loop_impl(
+                dataloader=dataloader,
+                description=f"{description} (sparse)",
+                prediction_loss_only=prediction_loss_only,
+                ignore_keys=ignore_keys,
+                metric_key_prefix=metric_key_prefix,
             )
-        )
-        self.log(output.metrics)
-
-        self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, output.metrics)
-
-        self._memory_tracker.stop_and_update_metrics(output.metrics)
-
-        return output.metrics
+            
+            # Reset flag
+            self._skip_residual_calculation = False
+            
+            return sparse_output
+            
+        finally:
+            # Restore dense weights from CPU
+            if self.is_world_process_zero():
+                logger.info("Restoring dense weights from CPU...")
+            
+            for name, param in unwrapped_model.named_parameters():
+                if name in dense_state:
+                    cpu_tensor = dense_state[name]
+                    if self._is_dtensor(param):
+                        # For DTensor, update the local shard from CPU tensor
+                        local_param = param.to_local()
+                        local_param.copy_(cpu_tensor.to(local_param.device))
+                    else:
+                        # For regular tensor, restore from CPU
+                        param.data.copy_(cpu_tensor.to(param.device))
+            
+            # Synchronize all processes after restoration
+            if self.args.world_size > 1 and dist.is_initialized():
+                dist.barrier()
+            
+            # Clean up CPU memory
+            dense_state.clear()
+            torch.cuda.empty_cache()
+            
+            if self.is_world_process_zero():
+                logger.info(f"Dense weights restored from CPU after sparse evaluation")
 
     def evaluation_loop(
         self,
@@ -781,8 +815,50 @@ class ADMMTrainer(Trainer):
     ) -> EvalLoopOutput:
         """
         Prediction/evaluation loop, shared by `Trainer.evaluate()` and `Trainer.predict()`.
+        Now includes sparse model evaluation alongside dense model evaluation.
 
         Works both with or without labels.
+        """
+        # Step 1: Evaluate dense model
+        dense_output = self._evaluation_loop_impl(
+            dataloader=dataloader,
+            description=description,
+            prediction_loss_only=prediction_loss_only,
+            ignore_keys=ignore_keys,
+            metric_key_prefix=metric_key_prefix,
+        )
+        
+        # Step 2: Evaluate sparse model (if using ADMM)
+        sparse_output = None
+        unwrapped_optimizer = self.optimizer.optimizer if hasattr(self.optimizer, 'optimizer') else self.optimizer
+
+        if hasattr(unwrapped_optimizer, 'final_projection'):
+            sparse_output = self._evaluate_sparse_model(
+                dataloader=dataloader,
+                description=description,
+                prediction_loss_only=prediction_loss_only,
+                ignore_keys=ignore_keys,
+                metric_key_prefix=f"{metric_key_prefix}_sparse",
+            )
+        
+        # Step 3: Merge metrics from sparse evaluation
+        if sparse_output is not None:
+            dense_output.metrics.update(sparse_output.metrics)
+        
+        return dense_output
+
+    def _evaluation_loop_impl(
+        self,
+        dataloader: DataLoader,
+        description: str,
+        prediction_loss_only: Optional[bool] = None,
+        ignore_keys: Optional[List[str]] = None,
+        metric_key_prefix: str = "eval",
+    ) -> EvalLoopOutput:
+        """
+        Internal evaluation loop implementation (original evaluation_loop logic).
+        Renamed to avoid conflict with the new evaluation_loop wrapper.
+        Includes ADMM metrics (primal/dual residuals) calculation.
         """
         args = self.args
 
@@ -806,16 +882,12 @@ class ADMMTrainer(Trainer):
             if self.is_fsdp_enabled:
                 self.model = model
 
-            # for the rest of this function `model` is the outside model, whether it was wrapped or not
             if model is not self.model:
                 self.model_wrapped = model
 
-            # backward compatibility
             if self.is_deepspeed_enabled:
                 self.deepspeed = self.model_wrapped
 
-        # if full fp16 or bf16 eval is wanted and this ``evaluation`` or ``predict`` isn't called
-        # while ``train`` is running, cast it to the right dtype first and then put on device
         if not self.is_in_train:
             if args.fp16_full_eval:
                 model = model.to(dtype=torch.float16, device=args.device)
@@ -836,7 +908,6 @@ class ADMMTrainer(Trainer):
             self.optimizer.eval()
 
         self.callback_handler.eval_dataloader = dataloader
-        # Do this before wrapping.
         eval_dataset = getattr(dataloader, "dataset", None)
 
         if args.past_index >= 0:
@@ -850,17 +921,13 @@ class ADMMTrainer(Trainer):
         all_inputs = EvalLoopContainer(self.args.eval_do_concat_batches, padding_index=-100)
 
         metrics = None
-
-        # Will be useful when we have an iterable dataset so don't know its length.
         observed_num_examples = 0
 
         # Main evaluation loop
         for step, inputs in enumerate(dataloader):
-            # Update the observed num examples
             observed_batch_size = find_batch_size(inputs)
             if observed_batch_size is not None:
                 observed_num_examples += observed_batch_size
-                # For batch samplers, batch_size is not known by the dataloader in advance.
                 if batch_size is None:
                     batch_size = observed_batch_size
 
@@ -874,18 +941,10 @@ class ADMMTrainer(Trainer):
 
             # Update containers
             if rem_losses is not None:
-                # rem_losses = self.gather_function((rem_losses.repeat(batch_size)))
-                # all_rem_losses.add(rem_losses)
-                # print(f"DEBUG: Rank {self.accelerator.process_index} - REM Loss before gather: {rem_losses.item()}")
                 gathered_rem_losses = self.gather_function((rem_losses.repeat(batch_size)))
-                # print(f"DEBUG: Rank {self.accelerator.process_index} - REM Loss after gather: {gathered_rem_losses}")
                 all_rem_losses.add(gathered_rem_losses)
             if losses is not None:
-                # losses = self.gather_function((losses.repeat(batch_size)))
-                # all_losses.add(losses)
-                # print(f"DEBUG: Rank {self.accelerator.process_index} - Loss before gather: {losses.item()}")
                 gathered_losses = self.gather_function((losses.repeat(batch_size)))
-                # print(f"DEBUG: Rank {self.accelerator.process_index} - Loss after gather: {gathered_losses}")
                 all_losses.add(gathered_losses)
             if inputs_decode is not None:
                 inputs_decode = self.accelerator.pad_across_processes(inputs_decode, dim=1, pad_index=-100)
@@ -893,7 +952,6 @@ class ADMMTrainer(Trainer):
                 if not self.args.batch_eval_metrics or description == "Prediction":
                     all_inputs.add(inputs_decode)
             if labels is not None:
-                # Pad labels here, preparing for preprocess_logits_for_metrics in next logits block.
                 labels = self.accelerator.pad_across_processes(labels, dim=1, pad_index=-100)
             if logits is not None:
                 logits = self.accelerator.pad_across_processes(logits, dim=1, pad_index=-100)
@@ -926,7 +984,6 @@ class ADMMTrainer(Trainer):
                 del losses, logits, labels, inputs
                 torch.cuda.empty_cache()
 
-            # Gather all tensors and put them back on the CPU if we have done enough accumulation steps.
             elif args.eval_accumulation_steps is not None and (step + 1) % args.eval_accumulation_steps == 0:
                 all_rem_losses.to_cpu_and_numpy()
                 all_losses.to_cpu_and_numpy()
@@ -940,7 +997,6 @@ class ADMMTrainer(Trainer):
         # After all calls to `.gather_function`, reset to `gather_for_metrics`:
         self.gather_function = self.accelerator.gather_for_metrics
         if args.past_index and hasattr(self, "_past"):
-            # Clean the state at the end of the evaluation loop
             delattr(self, "_past")
 
         # Gather all remaining tensors and put them back on the CPU
@@ -953,14 +1009,12 @@ class ADMMTrainer(Trainer):
         # Number of samples
         if has_length(eval_dataset):
             num_samples = len(eval_dataset)
-        # The instance check is weird and does not actually check for the type, but whether the dataset has the right
-        # methods. Therefore we need to make sure it also has the attribute.
         elif isinstance(eval_dataset, IterableDatasetShard) and getattr(eval_dataset, "num_examples", 0) > 0:
             num_samples = eval_dataset.num_examples
         else:
             if has_length(dataloader):
                 num_samples = self.num_examples(dataloader)
-            else:  # both len(dataloader.dataset) and len(dataloader) fail
+            else:
                 num_samples = observed_num_examples
         if num_samples == 0 and observed_num_examples > 0:
             num_samples = observed_num_examples
@@ -980,17 +1034,19 @@ class ADMMTrainer(Trainer):
                 metrics = self.compute_metrics(EvalPrediction(predictions=all_preds, label_ids=all_labels))
         elif metrics is None:
             metrics = {}
-        ## ADMM metrics
-        primal_residual = self.calculate_primal_residual(
-            metric_key_prefix=metric_key_prefix
-        )
-        dual_residual = self.calculate_dual_residual(
-            metric_key_prefix=metric_key_prefix
-        )
-        # Only update metrics on the main process to avoid redundancy in logs
-        if self.is_world_process_zero():
-            metrics.update(primal_residual)
-            metrics.update(dual_residual)
+        
+        ## ADMM metrics (only for dense model evaluation, skip for sparse)
+        if not getattr(self, '_skip_residual_calculation', False):
+            primal_residual = self.calculate_primal_residual(
+                metric_key_prefix=metric_key_prefix
+            )
+            dual_residual = self.calculate_dual_residual(
+                metric_key_prefix=metric_key_prefix
+            )
+            # Only update metrics on the main process to avoid redundancy in logs
+            if self.is_world_process_zero():
+                metrics.update(primal_residual)
+                metrics.update(dual_residual)
 
         # To be JSON-serializable, we need to remove numpy types or zero-d tensors
         metrics = denumpify_detensorize(metrics)
@@ -1013,6 +1069,257 @@ class ADMMTrainer(Trainer):
                 metrics[f"{metric_key_prefix}_{key}"] = metrics.pop(key)
 
         return EvalLoopOutput(predictions=all_preds, label_ids=all_labels, metrics=metrics, num_samples=num_samples)
+
+    def _is_dtensor(self, x):
+        """Check if tensor is a DTensor (distributed tensor from FSDP)."""
+        return hasattr(x, "to_local")
+
+    def _loc(self, x):
+        """Return local shard if DTensor, otherwise the tensor itself."""
+        return x.to_local() if self._is_dtensor(x) else x
+    ## legacy eval loop
+    # def evaluation_loop(
+    #     self,
+    #     dataloader: DataLoader,
+    #     description: str,
+    #     prediction_loss_only: Optional[bool] = None,
+    #     ignore_keys: Optional[List[str]] = None,
+    #     metric_key_prefix: str = "eval",
+    # ) -> EvalLoopOutput:
+    #     """
+    #     Prediction/evaluation loop, shared by `Trainer.evaluate()` and `Trainer.predict()`.
+
+    #     Works both with or without labels.
+    #     """
+    #     args = self.args
+
+    #     prediction_loss_only = prediction_loss_only if prediction_loss_only is not None else args.prediction_loss_only
+
+    #     # if eval is called w/o train, handle model prep here
+    #     if self.is_deepspeed_enabled and self.deepspeed is None:
+    #         _, _ = deepspeed_init(self, num_training_steps=0, inference=True)
+
+    #     model = self._wrap_model(self.model, training=False, dataloader=dataloader)
+
+    #     if len(self.accelerator._models) == 0 and model is self.model:
+    #         start_time = time.time()
+    #         model = (
+    #             self.accelerator.prepare(model)
+    #             if self.is_deepspeed_enabled
+    #             else self.accelerator.prepare_model(model, evaluation_mode=True)
+    #         )
+    #         self.model_preparation_time = round(time.time() - start_time, 4)
+
+    #         if self.is_fsdp_enabled:
+    #             self.model = model
+
+    #         # for the rest of this function `model` is the outside model, whether it was wrapped or not
+    #         if model is not self.model:
+    #             self.model_wrapped = model
+
+    #         # backward compatibility
+    #         if self.is_deepspeed_enabled:
+    #             self.deepspeed = self.model_wrapped
+
+    #     # if full fp16 or bf16 eval is wanted and this ``evaluation`` or ``predict`` isn't called
+    #     # while ``train`` is running, cast it to the right dtype first and then put on device
+    #     if not self.is_in_train:
+    #         if args.fp16_full_eval:
+    #             model = model.to(dtype=torch.float16, device=args.device)
+    #         elif args.bf16_full_eval:
+    #             model = model.to(dtype=torch.bfloat16, device=args.device)
+
+    #     batch_size = self.args.eval_batch_size
+    #     if self.is_world_process_zero():
+    #         logger.info(f"\n***** Running {description} *****")
+    #         if has_length(dataloader):
+    #             logger.info(f"  Num examples = {self.num_examples(dataloader)}")
+    #         else:
+    #             logger.info("  Num examples: Unknown")
+    #         logger.info(f"  Batch size = {batch_size}")
+
+    #     model.eval()
+    #     if hasattr(self.optimizer, "eval") and callable(self.optimizer.eval):
+    #         self.optimizer.eval()
+
+    #     self.callback_handler.eval_dataloader = dataloader
+    #     # Do this before wrapping.
+    #     eval_dataset = getattr(dataloader, "dataset", None)
+
+    #     if args.past_index >= 0:
+    #         self._past = None
+
+    #     # Initialize containers
+    #     all_rem_losses = EvalLoopContainer(self.args.eval_do_concat_batches, padding_index=-100)
+    #     all_losses = EvalLoopContainer(self.args.eval_do_concat_batches, padding_index=-100)
+    #     all_preds = EvalLoopContainer(self.args.eval_do_concat_batches, padding_index=-100)
+    #     all_labels = EvalLoopContainer(self.args.eval_do_concat_batches, padding_index=-100)
+    #     all_inputs = EvalLoopContainer(self.args.eval_do_concat_batches, padding_index=-100)
+
+    #     metrics = None
+
+    #     # Will be useful when we have an iterable dataset so don't know its length.
+    #     observed_num_examples = 0
+
+    #     # Main evaluation loop
+    #     for step, inputs in enumerate(dataloader):
+    #         # Update the observed num examples
+    #         observed_batch_size = find_batch_size(inputs)
+    #         if observed_batch_size is not None:
+    #             observed_num_examples += observed_batch_size
+    #             # For batch samplers, batch_size is not known by the dataloader in advance.
+    #             if batch_size is None:
+    #                 batch_size = observed_batch_size
+
+    #         # Prediction step
+    #         rem_losses, losses, logits, labels = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
+    #         main_input_name = getattr(self.model, "main_input_name", "input_ids")
+    #         inputs_decode = self._prepare_input(inputs[main_input_name]) if args.include_inputs_for_metrics else None
+
+    #         if is_torch_xla_available():
+    #             xm.mark_step()
+
+    #         # Update containers
+    #         if rem_losses is not None:
+    #             # rem_losses = self.gather_function((rem_losses.repeat(batch_size)))
+    #             # all_rem_losses.add(rem_losses)
+    #             # print(f"DEBUG: Rank {self.accelerator.process_index} - REM Loss before gather: {rem_losses.item()}")
+    #             gathered_rem_losses = self.gather_function((rem_losses.repeat(batch_size)))
+    #             # print(f"DEBUG: Rank {self.accelerator.process_index} - REM Loss after gather: {gathered_rem_losses}")
+    #             all_rem_losses.add(gathered_rem_losses)
+    #         if losses is not None:
+    #             # losses = self.gather_function((losses.repeat(batch_size)))
+    #             # all_losses.add(losses)
+    #             # print(f"DEBUG: Rank {self.accelerator.process_index} - Loss before gather: {losses.item()}")
+    #             gathered_losses = self.gather_function((losses.repeat(batch_size)))
+    #             # print(f"DEBUG: Rank {self.accelerator.process_index} - Loss after gather: {gathered_losses}")
+    #             all_losses.add(gathered_losses)
+    #         if inputs_decode is not None:
+    #             inputs_decode = self.accelerator.pad_across_processes(inputs_decode, dim=1, pad_index=-100)
+    #             inputs_decode = self.gather_function((inputs_decode))
+    #             if not self.args.batch_eval_metrics or description == "Prediction":
+    #                 all_inputs.add(inputs_decode)
+    #         if labels is not None:
+    #             # Pad labels here, preparing for preprocess_logits_for_metrics in next logits block.
+    #             labels = self.accelerator.pad_across_processes(labels, dim=1, pad_index=-100)
+    #         if logits is not None:
+    #             logits = self.accelerator.pad_across_processes(logits, dim=1, pad_index=-100)
+    #             if self.preprocess_logits_for_metrics is not None:
+    #                 logits = self.preprocess_logits_for_metrics(logits, labels)
+    #             logits = self.gather_function((logits))
+    #             if not self.args.batch_eval_metrics or description == "Prediction":
+    #                 all_preds.add(logits)
+    #         if labels is not None:
+    #             labels = self.gather_function((labels))
+    #             if not self.args.batch_eval_metrics or description == "Prediction":
+    #                 all_labels.add(labels)
+
+    #         self.control = self.callback_handler.on_prediction_step(args, self.state, self.control)
+
+    #         if self.args.batch_eval_metrics:
+    #             if self.compute_metrics is not None and logits is not None and labels is not None:
+    #                 is_last_step = self.accelerator.gradient_state.end_of_dataloader
+    #                 if args.include_inputs_for_metrics:
+    #                     metrics = self.compute_metrics(
+    #                         EvalPrediction(predictions=logits, label_ids=labels, inputs=inputs),
+    #                         compute_result=is_last_step,
+    #                     )
+    #                 else:
+    #                     metrics = self.compute_metrics(
+    #                         EvalPrediction(predictions=logits, label_ids=labels),
+    #                         compute_result=is_last_step,
+    #                     )
+
+    #             del losses, logits, labels, inputs
+    #             torch.cuda.empty_cache()
+
+    #         # Gather all tensors and put them back on the CPU if we have done enough accumulation steps.
+    #         elif args.eval_accumulation_steps is not None and (step + 1) % args.eval_accumulation_steps == 0:
+    #             all_rem_losses.to_cpu_and_numpy()
+    #             all_losses.to_cpu_and_numpy()
+    #             all_preds.to_cpu_and_numpy()
+    #             all_labels.to_cpu_and_numpy()
+    #             all_inputs.to_cpu_and_numpy()
+
+    #             del losses, logits, labels, inputs
+    #             torch.cuda.empty_cache()
+
+    #     # After all calls to `.gather_function`, reset to `gather_for_metrics`:
+    #     self.gather_function = self.accelerator.gather_for_metrics
+    #     if args.past_index and hasattr(self, "_past"):
+    #         # Clean the state at the end of the evaluation loop
+    #         delattr(self, "_past")
+
+    #     # Gather all remaining tensors and put them back on the CPU
+    #     all_rem_losses = all_rem_losses.get_arrays()
+    #     all_losses = all_losses.get_arrays()
+    #     all_preds = all_preds.get_arrays()
+    #     all_labels = all_labels.get_arrays()
+    #     all_inputs = all_inputs.get_arrays()
+
+    #     # Number of samples
+    #     if has_length(eval_dataset):
+    #         num_samples = len(eval_dataset)
+    #     # The instance check is weird and does not actually check for the type, but whether the dataset has the right
+    #     # methods. Therefore we need to make sure it also has the attribute.
+    #     elif isinstance(eval_dataset, IterableDatasetShard) and getattr(eval_dataset, "num_examples", 0) > 0:
+    #         num_samples = eval_dataset.num_examples
+    #     else:
+    #         if has_length(dataloader):
+    #             num_samples = self.num_examples(dataloader)
+    #         else:  # both len(dataloader.dataset) and len(dataloader) fail
+    #             num_samples = observed_num_examples
+    #     if num_samples == 0 and observed_num_examples > 0:
+    #         num_samples = observed_num_examples
+
+    #     # Metrics!
+    #     if (
+    #         self.compute_metrics is not None
+    #         and all_preds is not None
+    #         and all_labels is not None
+    #         and not self.args.batch_eval_metrics
+    #     ):
+    #         if args.include_inputs_for_metrics:
+    #             metrics = self.compute_metrics(
+    #                 EvalPrediction(predictions=all_preds, label_ids=all_labels, inputs=all_inputs)
+    #             )
+    #         else:
+    #             metrics = self.compute_metrics(EvalPrediction(predictions=all_preds, label_ids=all_labels))
+    #     elif metrics is None:
+    #         metrics = {}
+    #     ## ADMM metrics
+    #     primal_residual = self.calculate_primal_residual(
+    #         metric_key_prefix=metric_key_prefix
+    #     )
+    #     dual_residual = self.calculate_dual_residual(
+    #         metric_key_prefix=metric_key_prefix
+    #     )
+    #     # Only update metrics on the main process to avoid redundancy in logs
+    #     if self.is_world_process_zero():
+    #         metrics.update(primal_residual)
+    #         metrics.update(dual_residual)
+
+    #     # To be JSON-serializable, we need to remove numpy types or zero-d tensors
+    #     metrics = denumpify_detensorize(metrics)
+    #     if isinstance(all_rem_losses, list) and all_rem_losses:
+    #         metrics[f"{metric_key_prefix}_rem_loss"] = np.concatenate(all_rem_losses).mean().item()
+    #     elif isinstance(all_rem_losses, np.ndarray):
+    #         metrics[f"{metric_key_prefix}_rem_loss"] = all_rem_losses.mean().item()
+    #     if isinstance(all_losses, list) and all_losses:
+    #         metrics[f"{metric_key_prefix}_loss"] = np.concatenate(all_losses).mean().item()
+    #     elif isinstance(all_losses, np.ndarray):
+    #         metrics[f"{metric_key_prefix}_loss"] = all_losses.mean().item()
+    #     if hasattr(self, "jit_compilation_time"):
+    #         metrics[f"{metric_key_prefix}_jit_compilation_time"] = self.jit_compilation_time
+    #     if hasattr(self, "model_preparation_time"):
+    #         metrics[f"{metric_key_prefix}_model_preparation_time"] = self.model_preparation_time
+
+    #     # Prefix all keys with metric_key_prefix + '_'
+    #     for key in list(metrics.keys()):
+    #         if not key.startswith(f"{metric_key_prefix}_"):
+    #             metrics[f"{metric_key_prefix}_{key}"] = metrics.pop(key)
+
+    #     return EvalLoopOutput(predictions=all_preds, label_ids=all_labels, metrics=metrics, num_samples=num_samples)
     
     def _is_dtensor(self,x):
         return hasattr(x, "to_local")
