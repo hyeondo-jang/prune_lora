@@ -216,7 +216,9 @@ def get_admm_optimizer(base_optimizer_cls):
                 init_importance = None
 
             # Initial split z and initial_split (as bool)
-            z0 = p.detach().clone()
+            z0 = torch.zeros_like(
+                p, memory_format=torch.preserve_format
+            )
             
             if self.init_lambda_from_inv_resid:
                 initial_residual = torch.norm(p.detach() - z0.detach())
