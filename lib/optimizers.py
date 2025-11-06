@@ -146,7 +146,7 @@ def get_admm_optimizer(base_optimizer_cls):
             # Runtime helpers
             self.accelerator = accelerator
             self.process_group = getattr(accelerator, "process_group", None) if accelerator is not None else None
-            self.current_step = 0
+            self.current_step = 1
             self.mask_metrics = {'step_hamming': 0.0, 'initial_hamming': 0.0, 'step_iou': 0.0, 'initial_iou': 0.0}
 
         def _lazy_init_admm_state(self, p: torch.nn.Parameter, group: Dict):
