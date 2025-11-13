@@ -333,6 +333,7 @@ def get_model_rotary_emb(model):
 def check_sparsity(model, log_by_block: bool = False):
     """
     Calculates the sparsity (ratio of zero parameters) of the model's linear layers.
+    For LoRA models, only checks the base layer weights (excludes LoRA adapter parameters).
 
     Args:
         model (nn.Module): The model object to check sparsity for.
@@ -359,18 +360,39 @@ def check_sparsity(model, log_by_block: bool = False):
         sub_count = 0
         sub_params = 0
         for name in subset:
-            # Check if the layer has a weight parameter
-            if hasattr(subset[name], 'weight') and subset[name].weight is not None:
-                W = subset[name].weight.data
+            # Skip LoRA adapter parameters (lora_A, lora_B, etc.)
+            if 'lora' in name.lower():
+                continue
                 
-                zeros = (W == 0).sum().item()
-                total = W.numel()
+            layer_module = subset[name]
+            
+            # For LoRA models, get the base layer weight instead of LoRA adapter
+            # PEFT wraps the original layer, so we need to access base_layer
+            if hasattr(layer_module, 'base_layer'):
+                # This is a LoRA-wrapped layer, get the base layer
+                base_layer = layer_module.base_layer
+                # Handle nested base_layer (sometimes it's wrapped again)
+                while hasattr(base_layer, 'base_layer'):
+                    base_layer = base_layer.base_layer
+                # Get the weight from the base layer
+                if hasattr(base_layer, 'weight') and base_layer.weight is not None:
+                    W = base_layer.weight.data
+                else:
+                    continue
+            elif hasattr(layer_module, 'weight') and layer_module.weight is not None:
+                # Regular linear layer (not LoRA-wrapped)
+                W = layer_module.weight.data
+            else:
+                continue
+            
+            zeros = (W == 0).sum().item()
+            total = W.numel()
 
-                count += zeros
-                total_params += total
-                
-                sub_count += zeros
-                sub_params += total
+            count += zeros
+            total_params += total
+            
+            sub_count += zeros
+            sub_params += total
 
         if log_by_block:
             layer_sparsity = float(sub_count) / sub_params if sub_params > 0 else 0.0

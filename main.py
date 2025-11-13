@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from transformers import AutoTokenizer
 from lib.prune import prune_safe, prune_alps, prune_wanda, prune_magnitude, prune_sparsegpt, prune_admm, globalprune_admm
-from lib.retrain import retrain_model
+from lib.retrain import retrain_model, retrain_lora
 from lib.eval import eval_ppl, eval_zero_shot
 from lib.data import get_loaders
 from lib.utils import check_sparsity, get_llm, start_record_memory_history, stop_record_memory_history, export_memory_snapshot, compute_dense_outputs, calculate_reconstruction_error
@@ -181,6 +181,12 @@ def main(argv):
         if local_rank == 0:
             logging.info("Retraining finished")
 
+    if FLAGS.do_retrain_lora:
+        if local_rank == 0:
+            logging.info("--- Starting LoRA Fine-tuning Phase ---")
+        retrain_lora(FLAGS, model, tokenizer, device)
+        if local_rank == 0:
+            logging.info("LoRA fine-tuning finished")
 
     if is_distributed:
         dist.barrier()
@@ -241,12 +247,12 @@ if __name__ == '__main__':
     flags.DEFINE_integer('seqlen', 2048, 'Sequence length for the model.')
     flags.DEFINE_integer('seed', 0, 'Seed for sampling the calibration data.')
     flags.DEFINE_integer('nsamples', 128, 'Number of calibration samples.')
-    flags.DEFINE_float('sparsity_ratio', 0.6, 'Sparsity level')
+    flags.DEFINE_float('sparsity_ratio', 0.5, 'Sparsity level')
     flags.DEFINE_enum('sparsity_type', "unstructured", ["unstructured", "4:8", "2:4"], 'Type of sparsity.')
-    flags.DEFINE_enum('prune_method', "global_admm", ["magnitude", "wanda", "sparsegpt", "safe", "alps","global_admm", 'dense'], 'Pruning method.')
+    flags.DEFINE_enum('prune_method', "magnitude", ["magnitude", "wanda", "sparsegpt", "safe", "alps","global_admm", 'dense'], 'Pruning method.')
     flags.DEFINE_enum('dataset', 'c4', ["c4", "wikitext2"], 'Calibration dataset.')
-    flags.DEFINE_string('data_path', '/home/kwanheelee/.cache/huggingface/hub/datasets--allenai--c4/snapshots/1588ec454efa1a09f29cd18ddd04fe05fc8653a2', 'Path to local raw dataset directory (e.g., ~/.cache/huggingface/hub/dataset). Overrides online download.')
-    # flags.DEFINE_string('data_path', None, 'Path to local raw dataset directory (e.g., ~/.cache/huggingface/hub/dataset). Overrides online download.')
+    # flags.DEFINE_string('data_path', '/home/kwanheelee/.cache/huggingface/hub/datasets--allenai--c4/snapshots/1588ec454efa1a09f29cd18ddd04fe05fc8653a2', 'Path to local raw dataset directory (e.g., ~/.cache/huggingface/hub/dataset). Overrides online download.')
+    flags.DEFINE_string('data_path', None, 'Path to local raw dataset directory (e.g., ~/.cache/huggingface/hub/dataset). Overrides online download.')
     # SAFE hyperparams
     flags.DEFINE_float('lmda', 1e-3, 'Penalty parameter for SAFE dual update.')
     flags.DEFINE_integer('batch_size', 4, 'Batch size for SAFE.')
@@ -325,6 +331,24 @@ if __name__ == '__main__':
     flags.DEFINE_integer('retrain_batch_size', 2, 'The batch size per device for retraining.')
     flags.DEFINE_integer('retrain_steps', 1, 'The number of training steps for retraining.')
     flags.DEFINE_integer('retrain_gradient_accumulation_steps', 1, 'Gradient accumulation steps for retraining.')
+    
+    # LoRA fine-tuning
+    flags.DEFINE_bool('do_retrain_lora', True, 'Whether to perform LoRA fine-tuning after pruning.')
+    flags.DEFINE_string('lora_dataset', 'c4', 'Dataset for LoRA fine-tuning (defaults to retrain_dataset or dataset).')
+    flags.DEFINE_float('lora_learning_rate', 1e-4, 'Learning rate for LoRA fine-tuning.')
+    flags.DEFINE_integer('lora_batch_size', 8, 'Total effective batch size for LoRA fine-tuning.')
+    flags.DEFINE_integer('lora_per_device_batch_size', 2, 'Per device batch size for LoRA fine-tuning.')
+    flags.DEFINE_integer('lora_steps', 100, 'Number of training steps for LoRA fine-tuning.')
+    flags.DEFINE_integer('lora_eval_steps', 4, 'Number of steps between evaluations for LoRA fine-tuning.')
+    flags.DEFINE_integer('lora_logging_steps', 1, 'Number of steps between logging for LoRA fine-tuning.')
+    flags.DEFINE_integer('lora_eval_samples', 4, 'Number of evaluation samples for LoRA fine-tuning.')
+    flags.DEFINE_bool('lora_do_eval', True, 'Whether to run evaluation during LoRA fine-tuning.')
+    flags.DEFINE_integer('lora_r', 8, 'LoRA rank parameter.')
+    flags.DEFINE_integer('lora_alpha', 16, 'LoRA alpha parameter.')
+    flags.DEFINE_float('lora_dropout', 0.05, 'LoRA dropout parameter.')
+    flags.DEFINE_enum('lora_mixed_precision', 'bf16', ['fp16', 'bf16', 'none'], 'Mixed precision for LoRA fine-tuning.')
+    flags.DEFINE_bool('lora_gradient_checkpointing', False, 'Whether to use gradient checkpointing for LoRA fine-tuning.')
+    flags.DEFINE_bool('lora_use_torch_compile', True, 'Whether to use torch.compile for LoRA fine-tuning.')
     
     # Logging & Evaluation
     flags.DEFINE_integer('admm_logging_steps', 1, 'Logging step interval for ADMM training.')

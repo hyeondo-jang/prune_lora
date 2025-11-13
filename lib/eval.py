@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import fnmatch
-from data import get_loaders 
+from .data import get_loaders 
 
 # Code adopted from https://github.com/locuslab/wanda
 
