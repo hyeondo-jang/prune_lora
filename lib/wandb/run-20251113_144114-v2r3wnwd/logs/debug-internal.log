@@ -1,0 +1,15 @@
+{"time":"2025-11-13T14:41:14.479589766+09:00","level":"INFO","msg":"stream: starting","core version":"0.19.11","symlink path":"/home/hyeondojang/log_teams/opt-model/elsa_iclr26/lib/wandb/run-20251113_144114-v2r3wnwd/logs/debug-core.log"}
+{"time":"2025-11-13T14:41:14.835726133+09:00","level":"INFO","msg":"created new stream","id":"v2r3wnwd"}
+{"time":"2025-11-13T14:41:14.835740719+09:00","level":"INFO","msg":"stream: started","id":"v2r3wnwd"}
+{"time":"2025-11-13T14:41:14.836337913+09:00","level":"INFO","msg":"handler: started","stream_id":"v2r3wnwd"}
+{"time":"2025-11-13T14:41:14.836356393+09:00","level":"INFO","msg":"writer: Do: started","stream_id":"v2r3wnwd"}
+{"time":"2025-11-13T14:41:14.83645568+09:00","level":"INFO","msg":"sender: started","stream_id":"v2r3wnwd"}
+{"time":"2025-11-13T14:41:15.200759399+09:00","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-11-13T14:41:46.89548827+09:00","level":"INFO","msg":"stream: closing","id":"v2r3wnwd"}
+{"time":"2025-11-13T14:41:46.895586961+09:00","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-11-13T14:41:46.895927017+09:00","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-11-13T14:41:47.706558682+09:00","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-11-13T14:41:47.960473138+09:00","level":"INFO","msg":"handler: closed","stream_id":"v2r3wnwd"}
+{"time":"2025-11-13T14:41:47.960483404+09:00","level":"INFO","msg":"writer: Close: closed","stream_id":"v2r3wnwd"}
+{"time":"2025-11-13T14:41:47.960595497+09:00","level":"INFO","msg":"sender: closed","stream_id":"v2r3wnwd"}
+{"time":"2025-11-13T14:41:47.961156037+09:00","level":"INFO","msg":"stream: closed","id":"v2r3wnwd"}

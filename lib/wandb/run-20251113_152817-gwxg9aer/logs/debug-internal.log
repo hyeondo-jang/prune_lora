@@ -1,0 +1,15 @@
+{"time":"2025-11-13T15:28:17.777203955+09:00","level":"INFO","msg":"stream: starting","core version":"0.19.11","symlink path":"/home/hyeondojang/log_teams/opt-model/elsa_iclr26/lib/wandb/run-20251113_152817-gwxg9aer/logs/debug-core.log"}
+{"time":"2025-11-13T15:28:18.101235361+09:00","level":"INFO","msg":"created new stream","id":"gwxg9aer"}
+{"time":"2025-11-13T15:28:18.101249368+09:00","level":"INFO","msg":"stream: started","id":"gwxg9aer"}
+{"time":"2025-11-13T15:28:18.101831138+09:00","level":"INFO","msg":"handler: started","stream_id":"gwxg9aer"}
+{"time":"2025-11-13T15:28:18.101850492+09:00","level":"INFO","msg":"writer: Do: started","stream_id":"gwxg9aer"}
+{"time":"2025-11-13T15:28:18.101949287+09:00","level":"INFO","msg":"sender: started","stream_id":"gwxg9aer"}
+{"time":"2025-11-13T15:28:18.416480549+09:00","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-11-13T15:30:38.902568479+09:00","level":"INFO","msg":"stream: closing","id":"gwxg9aer"}
+{"time":"2025-11-13T15:30:38.902666972+09:00","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-11-13T15:30:38.902972604+09:00","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-11-13T15:30:39.682825449+09:00","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-11-13T15:30:40.079969244+09:00","level":"INFO","msg":"handler: closed","stream_id":"gwxg9aer"}
+{"time":"2025-11-13T15:30:40.079980091+09:00","level":"INFO","msg":"writer: Close: closed","stream_id":"gwxg9aer"}
+{"time":"2025-11-13T15:30:40.080086474+09:00","level":"INFO","msg":"sender: closed","stream_id":"gwxg9aer"}
+{"time":"2025-11-13T15:30:40.081538654+09:00","level":"INFO","msg":"stream: closed","id":"gwxg9aer"}

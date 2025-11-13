@@ -1,0 +1,198 @@
+100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 1/1 [00:21<00:00, 21.15s/it][INFO|trainer.py:3705] 2025-11-13 12:44:08,818 >> Saving model checkpoint to /home/hyeondojang/log_teams/opt-model/elsa_iclr26/lib/lora_ft/save/checkpoint-1
+[INFO|configuration_utils.py:670] 2025-11-13 12:44:08,866 >> loading configuration file /home/hyeondojang/log_teams/opt-model/elsa_iclr26/save/opt-125m_wanda/0.6/config.json
+[INFO|configuration_utils.py:739] 2025-11-13 12:44:08,867 >> Model config OPTConfig {
+  "_name_or_path": "facebook/opt-125m",
+  "_remove_final_layer_norm": false,
+  "activation_dropout": 0.0,
+  "activation_function": "relu",
+  "architectures": [
+    "OPTForCausalLM"
+  ],
+  "attention_dropout": 0.0,
+  "bos_token_id": 2,
+  "do_layer_norm_before": true,
+  "dropout": 0.1,
+  "enable_bias": true,
+  "eos_token_id": 2,
+  "ffn_dim": 3072,
+  "hidden_size": 768,
+  "init_std": 0.02,
+  "layer_norm_elementwise_affine": true,
+  "layerdrop": 0.0,
+  "max_position_embeddings": 2048,
+  "model_type": "opt",
+  "num_attention_heads": 12,
+  "num_hidden_layers": 12,
+  "pad_token_id": 1,
+  "prefix": "</s>",
+  "torch_dtype": "float16",
+  "transformers_version": "4.45.0",
+  "use_cache": true,
+  "vocab_size": 50272,
+  "word_embed_proj_dim": 768
+}
+
+[INFO|configuration_utils.py:670] 2025-11-13 12:44:08,868 >> loading configuration file /home/hyeondojang/log_teams/opt-model/elsa_iclr26/save/opt-125m_wanda/0.6/config.json
+[INFO|configuration_utils.py:739] 2025-11-13 12:44:08,869 >> Model config OPTConfig {
+  "_name_or_path": "facebook/opt-125m",
+  "_remove_final_layer_norm": false,
+  "activation_dropout": 0.0,
+  "activation_function": "relu",
+  "architectures": [
+    "OPTForCausalLM"
+  ],
+  "attention_dropout": 0.0,
+  "bos_token_id": 2,
+  "do_layer_norm_before": true,
+  "dropout": 0.1,
+  "enable_bias": true,
+  "eos_token_id": 2,
+  "ffn_dim": 3072,
+  "hidden_size": 768,
+  "init_std": 0.02,
+  "layer_norm_elementwise_affine": true,
+  "layerdrop": 0.0,
+  "max_position_embeddings": 2048,
+  "model_type": "opt",
+  "num_attention_heads": 12,
+  "num_hidden_layers": 12,
+  "pad_token_id": 1,
+  "prefix": "</s>",
+  "torch_dtype": "float16",
+  "transformers_version": "4.45.0",
+  "use_cache": true,
+  "vocab_size": 50272,
+  "word_embed_proj_dim": 768
+}
+
+[INFO|tokenization_utils_base.py:2649] 2025-11-13 12:44:08,875 >> tokenizer config file saved in /home/hyeondojang/log_teams/opt-model/elsa_iclr26/lib/lora_ft/save/checkpoint-1/tokenizer_config.json
+[INFO|tokenization_utils_base.py:2658] 2025-11-13 12:44:08,876 >> Special tokens file saved in /home/hyeondojang/log_teams/opt-model/elsa_iclr26/lib/lora_ft/save/checkpoint-1/special_tokens_map.json
+[INFO|trainer.py:2505] 2025-11-13 12:44:09,164 >>
+
+Training completed. Do not forget to share your model on huggingface.co/models =)
+
+
+100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 1/1 [00:21<00:00, 21.62s/it]
+{'train_runtime': 23.6088, 'train_samples_per_second': 5.422, 'train_steps_per_second': 0.042, 'train_loss': 4.223590850830078, 'epoch': 1.0}
+[INFO|configuration_utils.py:670] 2025-11-13 12:44:09,242 >> loading configuration file /home/hyeondojang/log_teams/opt-model/elsa_iclr26/save/opt-125m_wanda/0.6/config.json
+[INFO|configuration_utils.py:739] 2025-11-13 12:44:09,243 >> Model config OPTConfig {
+  "_name_or_path": "facebook/opt-125m",
+  "_remove_final_layer_norm": false,
+  "activation_dropout": 0.0,
+  "activation_function": "relu",
+  "architectures": [
+    "OPTForCausalLM"
+  ],
+  "attention_dropout": 0.0,
+  "bos_token_id": 2,
+  "do_layer_norm_before": true,
+  "dropout": 0.1,
+  "enable_bias": true,
+  "eos_token_id": 2,
+  "ffn_dim": 3072,
+  "hidden_size": 768,
+  "init_std": 0.02,
+  "layer_norm_elementwise_affine": true,
+  "layerdrop": 0.0,
+  "max_position_embeddings": 2048,
+  "model_type": "opt",
+  "num_attention_heads": 12,
+  "num_hidden_layers": 12,
+  "pad_token_id": 1,
+  "prefix": "</s>",
+  "torch_dtype": "float16",
+  "transformers_version": "4.45.0",
+  "use_cache": true,
+  "vocab_size": 50272,
+  "word_embed_proj_dim": 768
+}
+
+[INFO|configuration_utils.py:670] 2025-11-13 12:44:09,244 >> loading configuration file /home/hyeondojang/log_teams/opt-model/elsa_iclr26/save/opt-125m_wanda/0.6/config.json
+[INFO|configuration_utils.py:739] 2025-11-13 12:44:09,245 >> Model config OPTConfig {
+  "_name_or_path": "facebook/opt-125m",
+  "_remove_final_layer_norm": false,
+  "activation_dropout": 0.0,
+  "activation_function": "relu",
+  "architectures": [
+    "OPTForCausalLM"
+  ],
+  "attention_dropout": 0.0,
+  "bos_token_id": 2,
+  "do_layer_norm_before": true,
+  "dropout": 0.1,
+  "enable_bias": true,
+  "eos_token_id": 2,
+  "ffn_dim": 3072,
+  "hidden_size": 768,
+  "init_std": 0.02,
+  "layer_norm_elementwise_affine": true,
+  "layerdrop": 0.0,
+  "max_position_embeddings": 2048,
+  "model_type": "opt",
+  "num_attention_heads": 12,
+  "num_hidden_layers": 12,
+  "pad_token_id": 1,
+  "prefix": "</s>",
+  "torch_dtype": "float16",
+  "transformers_version": "4.45.0",
+  "use_cache": true,
+  "vocab_size": 50272,
+  "word_embed_proj_dim": 768
+}
+
+[INFO|configuration_utils.py:670] 2025-11-13 12:44:09,251 >> loading configuration file /home/hyeondojang/log_teams/opt-model/elsa_iclr26/save/opt-125m_wanda/0.6/config.json
+[INFO|configuration_utils.py:739] 2025-11-13 12:44:09,252 >> Model config OPTConfig {
+  "_name_or_path": "facebook/opt-125m",
+  "_remove_final_layer_norm": false,
+  "activation_dropout": 0.0,
+  "activation_function": "relu",
+  "architectures": [
+    "OPTForCausalLM"
+  ],
+  "attention_dropout": 0.0,
+  "bos_token_id": 2,
+  "do_layer_norm_before": true,
+  "dropout": 0.1,
+  "enable_bias": true,
+  "eos_token_id": 2,
+  "ffn_dim": 3072,
+  "hidden_size": 768,
+  "init_std": 0.02,
+  "layer_norm_elementwise_affine": true,
+  "layerdrop": 0.0,
+  "max_position_embeddings": 2048,
+  "model_type": "opt",
+  "num_attention_heads": 12,
+  "num_hidden_layers": 12,
+  "pad_token_id": 1,
+  "prefix": "</s>",
+  "torch_dtype": "float16",
+  "transformers_version": "4.45.0",
+  "use_cache": true,
+  "vocab_size": 50272,
+  "word_embed_proj_dim": 768
+}
+***** train metrics *****
+  epoch                    =        1.0
+  total_flos               =   125025GF
+  train_loss               =     4.2236
+  train_runtime            = 0:00:23.60
+  train_samples            =        128
+  train_samples_per_second =      5.422
+  train_steps_per_second   =      0.042
+11/13/2025 12:44:09 - INFO - __main__ - *** Evaluate ***
+
+[INFO|trainer.py:4021] 2025-11-13 12:44:09,335 >>
+***** Running Evaluation *****
+[INFO|trainer.py:4023] 2025-11-13 12:44:09,336 >>   Num examples = 128
+[INFO|trainer.py:4026] 2025-11-13 12:44:09,336 >>   Batch size = 8
+100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 16/16 [00:08<00:00,  1.99it/s]
+***** eval metrics *****
+  epoch                   =        1.0
+  eval_accuracy           =     0.3222
+  eval_loss               =     3.9646
+  eval_runtime            = 0:00:08.55
+  eval_samples            =        128
+  eval_samples_per_second =      14.97
+  eval_steps_per_second   =      1.871
+  perplexity              =    52.6987

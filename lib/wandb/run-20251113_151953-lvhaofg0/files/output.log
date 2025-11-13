@@ -1,0 +1,336 @@
+/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/transformers/training_args.py:1545: FutureWarning: `evaluation_strategy` is deprecated and will be removed in version 4.46 of 🤗 Transformers. Use `eval_strategy` instead
+  warnings.warn(
+W1113 15:19:53.971731 23179221521408 finetune_lm.py:359] Process rank: 0, device: cuda:0, n_gpu: 1distributed training: True, 16-bits training: True
+I1113 15:19:53.972239 23179221521408 finetune_lm.py:363] Training/evaluation parameters TrainingArguments(
+_n_gpu=1,
+accelerator_config={'split_batches': False, 'dispatch_batches': None, 'even_batches': True, 'use_seedable_sampler': True, 'non_blocking': False, 'gradient_accumulation_kwargs': None, 'use_configured_state': False},
+adafactor=False,
+adam_beta1=0.9,
+adam_beta2=0.999,
+adam_epsilon=1e-08,
+auto_find_batch_size=False,
+batch_eval_metrics=False,
+bf16=False,
+bf16_full_eval=False,
+data_seed=None,
+dataloader_drop_last=False,
+dataloader_num_workers=0,
+dataloader_persistent_workers=False,
+dataloader_pin_memory=True,
+dataloader_prefetch_factor=None,
+ddp_backend=None,
+ddp_broadcast_buffers=None,
+ddp_bucket_cap_mb=None,
+ddp_find_unused_parameters=None,
+ddp_timeout=1800,
+debug=[],
+deepspeed=None,
+disable_tqdm=False,
+dispatch_batches=None,
+do_eval=True,
+do_predict=False,
+do_train=True,
+eval_accumulation_steps=None,
+eval_delay=0,
+eval_do_concat_batches=True,
+eval_on_start=False,
+eval_steps=1,
+eval_strategy=steps,
+eval_use_gather_object=False,
+evaluation_strategy=steps,
+fp16=True,
+fp16_backend=auto,
+fp16_full_eval=False,
+fp16_opt_level=O1,
+fsdp=[],
+fsdp_config={'min_num_params': 0, 'xla': False, 'xla_fsdp_v2': False, 'xla_fsdp_grad_ckpt': False},
+fsdp_min_num_params=0,
+fsdp_transformer_layer_cls_to_wrap=None,
+full_determinism=False,
+gradient_accumulation_steps=2,
+gradient_checkpointing=False,
+gradient_checkpointing_kwargs=None,
+greater_is_better=None,
+group_by_length=False,
+half_precision_backend=auto,
+hub_always_push=False,
+hub_model_id=None,
+hub_private_repo=False,
+hub_strategy=every_save,
+hub_token=<HUB_TOKEN>,
+ignore_data_skip=False,
+include_inputs_for_metrics=False,
+include_num_input_tokens_seen=False,
+include_tokens_per_second=False,
+jit_mode_eval=False,
+label_names=None,
+label_smoothing_factor=0.0,
+learning_rate=0.0001,
+length_column_name=length,
+load_best_model_at_end=False,
+local_rank=0,
+log_level=passive,
+log_level_replica=warning,
+log_on_each_node=True,
+logging_dir=./lora_ft_output/runs/Nov13_15-19-53_log-node04,
+logging_first_step=False,
+logging_nan_inf_filter=True,
+logging_steps=1,
+logging_strategy=steps,
+lr_scheduler_kwargs={},
+lr_scheduler_type=linear,
+max_grad_norm=1.0,
+max_steps=-1,
+metric_for_best_model=None,
+mp_parameters=,
+neftune_noise_alpha=None,
+no_cuda=False,
+num_train_epochs=1,
+optim=adamw_torch,
+optim_args=None,
+optim_target_modules=None,
+output_dir=./lora_ft_output,
+overwrite_output_dir=True,
+past_index=-1,
+per_device_eval_batch_size=1,
+per_device_train_batch_size=4,
+prediction_loss_only=False,
+push_to_hub=False,
+push_to_hub_model_id=None,
+push_to_hub_organization=None,
+push_to_hub_token=<PUSH_TO_HUB_TOKEN>,
+ray_scope=last,
+remove_unused_columns=True,
+report_to=[],
+restore_callback_states_from_checkpoint=False,
+resume_from_checkpoint=None,
+run_name=./lora_ft_output,
+save_on_each_node=False,
+save_only_model=False,
+save_safetensors=True,
+save_steps=500,
+save_strategy=no,
+save_total_limit=None,
+seed=0,
+skip_memory_metrics=True,
+split_batches=None,
+tf32=None,
+torch_compile=False,
+torch_compile_backend=None,
+torch_compile_mode=None,
+torch_empty_cache_steps=None,
+torchdynamo=None,
+tpu_metrics_debug=False,
+tpu_num_cores=None,
+use_cpu=False,
+use_ipex=False,
+use_legacy_prediction_loop=False,
+use_liger_kernel=False,
+use_mps_device=False,
+warmup_ratio=0.0,
+warmup_steps=0,
+weight_decay=0.0,
+)
+[INFO|configuration_utils.py:672] 2025-11-13 15:19:54,245 >> loading configuration file config.json from cache at /home/hyeondojang/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/snapshots/01c7f73d771dfac7d292323805ebc428287df4f9/config.json
+[INFO|configuration_utils.py:739] 2025-11-13 15:19:54,246 >> Model config LlamaConfig {
+  "_name_or_path": "meta-llama/Llama-2-7b-hf",
+  "architectures": [
+    "LlamaForCausalLM"
+  ],
+  "attention_bias": false,
+  "attention_dropout": 0.0,
+  "bos_token_id": 1,
+  "eos_token_id": 2,
+  "head_dim": 128,
+  "hidden_act": "silu",
+  "hidden_size": 4096,
+  "initializer_range": 0.02,
+  "intermediate_size": 11008,
+  "max_position_embeddings": 4096,
+  "mlp_bias": false,
+  "model_type": "llama",
+  "num_attention_heads": 32,
+  "num_hidden_layers": 32,
+  "num_key_value_heads": 32,
+  "pretraining_tp": 1,
+  "rms_norm_eps": 1e-05,
+  "rope_scaling": null,
+  "rope_theta": 10000.0,
+  "tie_word_embeddings": false,
+  "torch_dtype": "float16",
+  "transformers_version": "4.45.0",
+  "use_cache": true,
+  "vocab_size": 32000
+}
+
+[INFO|tokenization_utils_base.py:2214] 2025-11-13 15:19:54,479 >> loading file tokenizer.model from cache at /home/hyeondojang/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/snapshots/01c7f73d771dfac7d292323805ebc428287df4f9/tokenizer.model
+[INFO|tokenization_utils_base.py:2214] 2025-11-13 15:19:54,479 >> loading file added_tokens.json from cache at None
+[INFO|tokenization_utils_base.py:2214] 2025-11-13 15:19:54,479 >> loading file special_tokens_map.json from cache at /home/hyeondojang/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/snapshots/01c7f73d771dfac7d292323805ebc428287df4f9/special_tokens_map.json
+[INFO|tokenization_utils_base.py:2214] 2025-11-13 15:19:54,479 >> loading file tokenizer_config.json from cache at /home/hyeondojang/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/snapshots/01c7f73d771dfac7d292323805ebc428287df4f9/tokenizer_config.json
+[INFO|tokenization_utils_base.py:2214] 2025-11-13 15:19:54,479 >> loading file tokenizer.json from cache at /home/hyeondojang/.cache/huggingface/hub/models--meta-llama--Llama-2-7b-hf/snapshots/01c7f73d771dfac7d292323805ebc428287df4f9/tokenizer.json
+[INFO|configuration_utils.py:670] 2025-11-13 15:19:54,592 >> loading configuration file /home/hyeondojang/log_teams/opt-model/elsa_iclr26/save/Llama-2-7b-hf_wanda/0.6/config.json
+[INFO|configuration_utils.py:739] 2025-11-13 15:19:54,593 >> Model config LlamaConfig {
+  "_name_or_path": "/home/hyeondojang/log_teams/opt-model/elsa_iclr26/save/Llama-2-7b-hf_wanda/0.6",
+  "architectures": [
+    "LlamaForCausalLM"
+  ],
+  "attention_bias": false,
+  "attention_dropout": 0.0,
+  "bos_token_id": 1,
+  "eos_token_id": 2,
+  "head_dim": 128,
+  "hidden_act": "silu",
+  "hidden_size": 4096,
+  "initializer_range": 0.02,
+  "intermediate_size": 11008,
+  "max_position_embeddings": 4096,
+  "mlp_bias": false,
+  "model_type": "llama",
+  "num_attention_heads": 32,
+  "num_hidden_layers": 32,
+  "num_key_value_heads": 32,
+  "pretraining_tp": 1,
+  "rms_norm_eps": 1e-05,
+  "rope_scaling": null,
+  "rope_theta": 10000.0,
+  "tie_word_embeddings": false,
+  "torch_dtype": "float16",
+  "transformers_version": "4.45.0",
+  "use_cache": true,
+  "vocab_size": 32000
+}
+
+[INFO|modeling_utils.py:3723] 2025-11-13 15:19:54,599 >> loading weights file /home/hyeondojang/log_teams/opt-model/elsa_iclr26/save/Llama-2-7b-hf_wanda/0.6/model.safetensors.index.json
+[INFO|modeling_utils.py:1622] 2025-11-13 15:19:54,600 >> Instantiating LlamaForCausalLM model under default dtype torch.float16.
+[INFO|configuration_utils.py:1099] 2025-11-13 15:19:54,600 >> Generate config GenerationConfig {
+  "bos_token_id": 1,
+  "eos_token_id": 2
+}
+
+I1113 15:19:55.835967 23179221521408 modeling.py:991] We will use 90% of the memory on device 0 for storing the model, and 10% for the buffer to avoid OOM. You can set `max_memory` in to a higher value to use more memory (at your own risk).
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 3/3 [00:02<00:00,  1.27it/s]
+[INFO|modeling_utils.py:4568] 2025-11-13 15:19:58,240 >> All model checkpoint weights were used when initializing LlamaForCausalLM.
+
+[INFO|modeling_utils.py:4576] 2025-11-13 15:19:58,240 >> All the weights of LlamaForCausalLM were initialized from the model checkpoint at /home/hyeondojang/log_teams/opt-model/elsa_iclr26/save/Llama-2-7b-hf_wanda/0.6.
+If your task is similar to the task the model of the checkpoint was trained on, you can already use LlamaForCausalLM for predictions without further training.
+[INFO|configuration_utils.py:1052] 2025-11-13 15:19:58,244 >> loading configuration file /home/hyeondojang/log_teams/opt-model/elsa_iclr26/save/Llama-2-7b-hf_wanda/0.6/generation_config.json
+[INFO|configuration_utils.py:1099] 2025-11-13 15:19:58,245 >> Generate config GenerationConfig {
+  "bos_token_id": 1,
+  "do_sample": true,
+  "eos_token_id": 2,
+  "max_length": 4096,
+  "pad_token_id": 0,
+  "temperature": 0.6,
+  "top_p": 0.9
+}
+
+I1113 15:19:58.378109 23179221521408 data.py:137] No valid processed cache found. Generating dataset...
+I1113 15:19:58.378299 23179221521408 data.py:45] Loading C4 raw data from Hugging Face Hub.
+Using custom data configuration default-b04fc8a0b8562884
+I1113 15:20:04.140708 23179221521408 builder.py:610] Using custom data configuration default-b04fc8a0b8562884
+Loading Dataset Infos from /home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/datasets/packaged_modules/json
+I1113 15:20:04.140988 23179221521408 info.py:355] Loading Dataset Infos from /home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/datasets/packaged_modules/json
+Overwrite dataset info from restored data version if exists.
+I1113 15:20:04.147407 23179221521408 builder.py:394] Overwrite dataset info from restored data version if exists.
+Loading Dataset info from /home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-b04fc8a0b8562884/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2
+I1113 15:20:04.147666 23179221521408 info.py:274] Loading Dataset info from /home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-b04fc8a0b8562884/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2
+Found cached dataset c4 (/home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-b04fc8a0b8562884/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2)
+I1113 15:20:04.205785 23179221521408 builder.py:864] Found cached dataset c4 (/home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-b04fc8a0b8562884/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2)
+Loading Dataset info from /home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-b04fc8a0b8562884/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2
+I1113 15:20:04.206020 23179221521408 info.py:274] Loading Dataset info from /home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-b04fc8a0b8562884/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2
+Tokenizing C4: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 64/64 [00:04<00:00, 15.99it/s]
+Generating samples: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 64/64 [00:00<00:00, 11133.78it/s]
+I1113 15:20:08.271104 23179221521408 data.py:137] No valid processed cache found. Generating dataset...
+I1113 15:20:08.271369 23179221521408 data.py:45] Loading C4 raw data from Hugging Face Hub.
+Using custom data configuration default-c7bc8b0aefc5e48f
+I1113 15:20:09.809425 23179221521408 builder.py:610] Using custom data configuration default-c7bc8b0aefc5e48f
+Loading Dataset Infos from /home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/datasets/packaged_modules/json
+I1113 15:20:09.809694 23179221521408 info.py:355] Loading Dataset Infos from /home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/datasets/packaged_modules/json
+Overwrite dataset info from restored data version if exists.
+I1113 15:20:09.815266 23179221521408 builder.py:394] Overwrite dataset info from restored data version if exists.
+Loading Dataset info from /home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-c7bc8b0aefc5e48f/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2
+I1113 15:20:09.815512 23179221521408 info.py:274] Loading Dataset info from /home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-c7bc8b0aefc5e48f/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2
+Found cached dataset c4 (/home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-c7bc8b0aefc5e48f/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2)
+I1113 15:20:09.821193 23179221521408 builder.py:864] Found cached dataset c4 (/home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-c7bc8b0aefc5e48f/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2)
+Loading Dataset info from /home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-c7bc8b0aefc5e48f/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2
+I1113 15:20:09.821419 23179221521408 info.py:274] Loading Dataset info from /home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-c7bc8b0aefc5e48f/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2
+Tokenizing C4: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00<00:00, 52.19it/s]
+Generating samples: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00<00:00, 10565.00it/s]
+/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/transformers/utils/import_utils.py:601: FutureWarning: `is_torch_tpu_available` is deprecated and will be removed in 4.41.0. Please use the `is_torch_xla_available` instead.
+  warnings.warn(
+W1113 15:20:09.919983 23179221521408 other.py:441] Detected kernel version 4.18.0, which is below the recommended minimum of 5.5.0; this can cause the process to hang. It is recommended to upgrade the kernel to the minimum version or higher.
+[INFO|trainer.py:667] 2025-11-13 15:20:09,925 >> Using auto half precision backend
+I1113 15:20:10.840655 23179221521408 finetune_lm.py:740] Model compiled with torch.compile
+[2025-11-13 15:20:11,080] [INFO] [real_accelerator.py:254:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+Warning: The cache directory for DeepSpeed Triton autotune, /home/hyeondojang/.triton/autotune, appears to be on an NFS system. While this is generally acceptable, if you experience slowdowns or hanging when DeepSpeed exits, it is recommended to set the TRITON_CACHE_DIR environment variable to a non-NFS path.
+I1113 15:20:11.343183 23179221521408 spawn.py:77] gcc -pthread -B /home/hyeondojang/.conda/envs/prune_gpa/compiler_compat -Wno-unused-result -Wsign-compare -DNDEBUG -fwrapv -O2 -Wall -fPIC -O2 -isystem /home/hyeondojang/.conda/envs/prune_gpa/include -fPIC -O2 -isystem /home/hyeondojang/.conda/envs/prune_gpa/include -fPIC -c /tmp/tmpglmwc3qe/test.c -o /tmp/tmpglmwc3qe/test.o
+I1113 15:20:11.357274 23179221521408 spawn.py:77] gcc -pthread -B /home/hyeondojang/.conda/envs/prune_gpa/compiler_compat /tmp/tmpglmwc3qe/test.o -laio -o /tmp/tmpglmwc3qe/a.out
+I1113 15:20:11.374687 23179221521408 spawn.py:77] gcc -pthread -B /home/hyeondojang/.conda/envs/prune_gpa/compiler_compat -Wno-unused-result -Wsign-compare -DNDEBUG -fwrapv -O2 -Wall -fPIC -O2 -isystem /home/hyeondojang/.conda/envs/prune_gpa/include -fPIC -O2 -isystem /home/hyeondojang/.conda/envs/prune_gpa/include -fPIC -c /tmp/tmpi5q3ntse/test.c -o /tmp/tmpi5q3ntse/test.o
+I1113 15:20:11.386844 23179221521408 spawn.py:77] gcc -pthread -B /home/hyeondojang/.conda/envs/prune_gpa/compiler_compat /tmp/tmpi5q3ntse/test.o -L/usr/local/cuda -L/usr/local/cuda/lib64 -lcufile -o /tmp/tmpi5q3ntse/a.out
+[2025-11-13 15:20:12,004] [INFO] [logging.py:107:log_dist] [Rank -1] [TorchCheckpointEngine] Initialized with serialization = False
+[INFO|trainer.py:2243] 2025-11-13 15:20:12,036 >> ***** Running training *****
+[INFO|trainer.py:2244] 2025-11-13 15:20:12,036 >>   Num examples = 64
+[INFO|trainer.py:2245] 2025-11-13 15:20:12,036 >>   Num Epochs = 1
+[INFO|trainer.py:2246] 2025-11-13 15:20:12,036 >>   Instantaneous batch size per device = 4
+[INFO|trainer.py:2249] 2025-11-13 15:20:12,036 >>   Total train batch size (w. parallel, distributed & accumulation) = 8
+[INFO|trainer.py:2250] 2025-11-13 15:20:12,036 >>   Gradient Accumulation steps = 2
+[INFO|trainer.py:2251] 2025-11-13 15:20:12,036 >>   Total optimization steps = 8
+[INFO|trainer.py:2252] 2025-11-13 15:20:12,038 >>   Number of trainable parameters = 4,194,304
+  0%|                                                                                                                                                                                                             | 0/8 [00:00<?, ?it/s]Traceback (most recent call last):
+  File "/home/hyeondojang/log_teams/opt-model/elsa_iclr26/lib/finetune_lm.py", line 940, in <module>
+    app.run(main)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/absl/app.py", line 316, in run
+    _run_main(main, args)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/absl/app.py", line 261, in _run_main
+    sys.exit(main(argv))
+  File "/home/hyeondojang/log_teams/opt-model/elsa_iclr26/lib/finetune_lm.py", line 753, in main
+    train_result = trainer.train(resume_from_checkpoint=checkpoint)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/transformers/trainer.py", line 2052, in train
+    return inner_training_loop(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/transformers/trainer.py", line 2388, in _inner_training_loop
+    tr_loss_step = self.training_step(model, inputs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/transformers/trainer.py", line 3485, in training_step
+    loss = self.compute_loss(model, inputs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/transformers/trainer.py", line 3532, in compute_loss
+    outputs = model(**inputs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/accelerate/utils/operations.py", line 818, in forward
+    return model_forward(*args, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/accelerate/utils/operations.py", line 806, in __call__
+    return convert_to_fp32(self.model_forward(*args, **kwargs))
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/torch/amp/autocast_mode.py", line 44, in decorate_autocast
+    return func(*args, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/peft/peft_model.py", line 1757, in forward
+    return self.base_model(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/peft/tuners/tuners_utils.py", line 193, in forward
+    return self.model.forward(*args, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/transformers/models/llama/modeling_llama.py", line 1189, in forward
+    outputs = self.model(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/transformers/models/llama/modeling_llama.py", line 1000, in forward
+    layer_outputs = decoder_layer(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/transformers/models/llama/modeling_llama.py", line 729, in forward
+    hidden_states, self_attn_weights, present_key_value = self.self_attn(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/transformers/models/llama/modeling_llama.py", line 630, in forward
+    query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/transformers/models/llama/modeling_llama.py", line 277, in apply_rotary_pos_emb
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 128.00 MiB. GPU 0 has a total capacity of 79.33 GiB of which 81.81 MiB is free. Including non-PyTorch memory, this process has 79.24 GiB memory in use. Of the allocated memory 74.55 GiB is allocated by PyTorch, and 3.32 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)

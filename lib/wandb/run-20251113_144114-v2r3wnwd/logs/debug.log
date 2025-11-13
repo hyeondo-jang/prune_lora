@@ -1,0 +1,25 @@
+2025-11-13 14:41:14,468 INFO    MainThread:31612 [wandb_setup.py:_flush():70] Current SDK version is 0.19.11
+2025-11-13 14:41:14,468 INFO    MainThread:31612 [wandb_setup.py:_flush():70] Configure stats pid to 31612
+2025-11-13 14:41:14,468 INFO    MainThread:31612 [wandb_setup.py:_flush():70] Loading settings from /home/hyeondojang/.config/wandb/settings
+2025-11-13 14:41:14,468 INFO    MainThread:31612 [wandb_setup.py:_flush():70] Loading settings from /home/hyeondojang/log_teams/opt-model/elsa_iclr26/lib/wandb/settings
+2025-11-13 14:41:14,468 INFO    MainThread:31612 [wandb_setup.py:_flush():70] Loading settings from environment variables
+2025-11-13 14:41:14,468 INFO    MainThread:31612 [wandb_init.py:setup_run_log_directory():724] Logging user logs to /home/hyeondojang/log_teams/opt-model/elsa_iclr26/lib/wandb/run-20251113_144114-v2r3wnwd/logs/debug.log
+2025-11-13 14:41:14,468 INFO    MainThread:31612 [wandb_init.py:setup_run_log_directory():725] Logging internal logs to /home/hyeondojang/log_teams/opt-model/elsa_iclr26/lib/wandb/run-20251113_144114-v2r3wnwd/logs/debug-internal.log
+2025-11-13 14:41:14,468 INFO    MainThread:31612 [wandb_init.py:init():852] calling init triggers
+2025-11-13 14:41:14,468 INFO    MainThread:31612 [wandb_init.py:init():857] wandb.init called with sweep_config: {}
+config: {'_wandb': {}}
+2025-11-13 14:41:14,468 INFO    MainThread:31612 [wandb_init.py:init():893] starting backend
+2025-11-13 14:41:14,468 INFO    MainThread:31612 [wandb_init.py:init():897] sending inform_init request
+2025-11-13 14:41:14,473 INFO    MainThread:31612 [backend.py:_multiprocessing_setup():101] multiprocessing start_methods=fork,spawn,forkserver, using: spawn
+2025-11-13 14:41:14,473 INFO    MainThread:31612 [wandb_init.py:init():907] backend started and connected
+2025-11-13 14:41:14,474 INFO    MainThread:31612 [wandb_init.py:init():1005] updated telemetry
+2025-11-13 14:41:14,504 INFO    MainThread:31612 [wandb_init.py:init():1029] communicating run to backend with 90.0 second timeout
+2025-11-13 14:41:15,198 INFO    MainThread:31612 [wandb_init.py:init():1104] starting run threads in backend
+2025-11-13 14:41:15,490 INFO    MainThread:31612 [wandb_run.py:_console_start():2573] atexit reg
+2025-11-13 14:41:15,490 INFO    MainThread:31612 [wandb_run.py:_redirect():2421] redirect: wrap_raw
+2025-11-13 14:41:15,490 INFO    MainThread:31612 [wandb_run.py:_redirect():2490] Wrapping output streams.
+2025-11-13 14:41:15,490 INFO    MainThread:31612 [wandb_run.py:_redirect():2513] Redirects installed.
+2025-11-13 14:41:15,494 INFO    MainThread:31612 [wandb_init.py:init():1150] run started, returning control to user process
+2025-11-13 14:41:15,495 INFO    MainThread:31612 [wandb_run.py:_config_callback():1436] config_cb None None {'logtostderr': False, 'alsologtostderr': False, 'log_dir': '', 'v': 0, 'verbosity': 0, 'logger_levels': {}, 'stderrthreshold': 'fatal', 'showprefixforinfo': True, 'run_with_pdb': False, 'pdb_post_mortem': False, 'pdb': False, 'run_with_profiling': False, 'profile_file': None, 'use_cprofile_for_profiling': True, 'only_check_args': False, 'model_name_or_path': '/home/hyeondojang/log_teams/opt-model/elsa_iclr26/save/Llama-2-7b-hf_wanda/0.6', 'config_name': 'meta-llama/Llama-2-7b-hf', 'lora_r': 8, 'lora_alpha': 16, 'lora_dropout': 0.05, 'dataset_name': 'c4', 'steps': 8, 'eval_samples': 4, 'block_size': 2048, 'output_dir': './lora_ft_output', 'per_device_train_batch_size': 4, 'per_device_eval_batch_size': 1, 'learning_rate': 0.0001, 'num_train_epochs': 1, 'batch_size': 8, 'lr_scheduler_type': 'linear', 'logging_steps': 1, 'eval_steps': 1, 'do_train': True, 'do_eval': True, 'overwrite_output_dir': True, 'seed': 0, 'wandb': True, 'wandb_project': 'test', 'data_path': None, 'eval_zero_shot': True, 'gradient_checkpointing': False, '?': False, 'help': False, 'helpshort': False, 'helpfull': False, 'helpxml': False}
+2025-11-13 14:41:15,508 INFO    MainThread:31612 [wandb_run.py:_config_callback():1436] config_cb None None {'train_samples': 64, 'requested_batch_size': 8, 'actual_effective_batch_size': 8, 'per_device_train_batch_size': 4, 'gradient_accumulation_steps': 2, 'num_gpus': 1, 'warmup_steps': 0}
+2025-11-13 14:41:46,894 INFO    MsgRouterThr:31612 [mailbox.py:close():129] [no run ID] Closing mailbox, abandoning 1 handles.

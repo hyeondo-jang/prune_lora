@@ -1,0 +1,554 @@
+/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/transformers/training_args.py:1545: FutureWarning: `evaluation_strategy` is deprecated and will be removed in version 4.46 of 🤗 Transformers. Use `eval_strategy` instead
+  warnings.warn(
+W1113 14:24:21.334830 22440741131264 finetune_lm.py:355] Process rank: 0, device: cuda:0, n_gpu: 1distributed training: True, 16-bits training: True
+I1113 14:24:21.335348 22440741131264 finetune_lm.py:359] Training/evaluation parameters TrainingArguments(
+_n_gpu=1,
+accelerator_config={'split_batches': False, 'dispatch_batches': None, 'even_batches': True, 'use_seedable_sampler': True, 'non_blocking': False, 'gradient_accumulation_kwargs': None, 'use_configured_state': False},
+adafactor=False,
+adam_beta1=0.9,
+adam_beta2=0.999,
+adam_epsilon=1e-08,
+auto_find_batch_size=False,
+batch_eval_metrics=False,
+bf16=False,
+bf16_full_eval=False,
+data_seed=None,
+dataloader_drop_last=False,
+dataloader_num_workers=0,
+dataloader_persistent_workers=False,
+dataloader_pin_memory=True,
+dataloader_prefetch_factor=None,
+ddp_backend=None,
+ddp_broadcast_buffers=None,
+ddp_bucket_cap_mb=None,
+ddp_find_unused_parameters=None,
+ddp_timeout=1800,
+debug=[],
+deepspeed=None,
+disable_tqdm=False,
+dispatch_batches=None,
+do_eval=True,
+do_predict=False,
+do_train=True,
+eval_accumulation_steps=None,
+eval_delay=0,
+eval_do_concat_batches=True,
+eval_on_start=False,
+eval_steps=1,
+eval_strategy=steps,
+eval_use_gather_object=False,
+evaluation_strategy=steps,
+fp16=True,
+fp16_backend=auto,
+fp16_full_eval=False,
+fp16_opt_level=O1,
+fsdp=[],
+fsdp_config={'min_num_params': 0, 'xla': False, 'xla_fsdp_v2': False, 'xla_fsdp_grad_ckpt': False},
+fsdp_min_num_params=0,
+fsdp_transformer_layer_cls_to_wrap=None,
+full_determinism=False,
+gradient_accumulation_steps=1,
+gradient_checkpointing=True,
+gradient_checkpointing_kwargs=None,
+greater_is_better=None,
+group_by_length=False,
+half_precision_backend=auto,
+hub_always_push=False,
+hub_model_id=None,
+hub_private_repo=False,
+hub_strategy=every_save,
+hub_token=<HUB_TOKEN>,
+ignore_data_skip=False,
+include_inputs_for_metrics=False,
+include_num_input_tokens_seen=False,
+include_tokens_per_second=False,
+jit_mode_eval=False,
+label_names=None,
+label_smoothing_factor=0.0,
+learning_rate=0.0001,
+length_column_name=length,
+load_best_model_at_end=False,
+local_rank=0,
+log_level=passive,
+log_level_replica=warning,
+log_on_each_node=True,
+logging_dir=./lora_ft_output/runs/Nov13_14-24-21_log-node04,
+logging_first_step=False,
+logging_nan_inf_filter=True,
+logging_steps=1,
+logging_strategy=steps,
+lr_scheduler_kwargs={},
+lr_scheduler_type=linear,
+max_grad_norm=1.0,
+max_steps=-1,
+metric_for_best_model=None,
+mp_parameters=,
+neftune_noise_alpha=None,
+no_cuda=False,
+num_train_epochs=1,
+optim=adamw_torch,
+optim_args=None,
+optim_target_modules=None,
+output_dir=./lora_ft_output,
+overwrite_output_dir=True,
+past_index=-1,
+per_device_eval_batch_size=1,
+per_device_train_batch_size=8,
+prediction_loss_only=False,
+push_to_hub=False,
+push_to_hub_model_id=None,
+push_to_hub_organization=None,
+push_to_hub_token=<PUSH_TO_HUB_TOKEN>,
+ray_scope=last,
+remove_unused_columns=True,
+report_to=[],
+restore_callback_states_from_checkpoint=False,
+resume_from_checkpoint=None,
+run_name=./lora_ft_output,
+save_on_each_node=False,
+save_only_model=False,
+save_safetensors=True,
+save_steps=500,
+save_strategy=no,
+save_total_limit=None,
+seed=0,
+skip_memory_metrics=True,
+split_batches=None,
+tf32=None,
+torch_compile=False,
+torch_compile_backend=None,
+torch_compile_mode=None,
+torch_empty_cache_steps=None,
+torchdynamo=None,
+tpu_metrics_debug=False,
+tpu_num_cores=None,
+use_cpu=False,
+use_ipex=False,
+use_legacy_prediction_loop=False,
+use_liger_kernel=False,
+use_mps_device=False,
+warmup_ratio=0.0,
+warmup_steps=0,
+weight_decay=0.0,
+)
+[INFO|configuration_utils.py:672] 2025-11-13 14:24:21,614 >> loading configuration file config.json from cache at /home/hyeondojang/.cache/huggingface/hub/models--facebook--opt-125m/snapshots/27dcfa74d334bc871f3234de431e71c6eeba5dd6/config.json
+[INFO|configuration_utils.py:739] 2025-11-13 14:24:21,614 >> Model config OPTConfig {
+  "_name_or_path": "facebook/opt-125m",
+  "_remove_final_layer_norm": false,
+  "activation_dropout": 0.0,
+  "activation_function": "relu",
+  "architectures": [
+    "OPTForCausalLM"
+  ],
+  "attention_dropout": 0.0,
+  "bos_token_id": 2,
+  "do_layer_norm_before": true,
+  "dropout": 0.1,
+  "enable_bias": true,
+  "eos_token_id": 2,
+  "ffn_dim": 3072,
+  "hidden_size": 768,
+  "init_std": 0.02,
+  "layer_norm_elementwise_affine": true,
+  "layerdrop": 0.0,
+  "max_position_embeddings": 2048,
+  "model_type": "opt",
+  "num_attention_heads": 12,
+  "num_hidden_layers": 12,
+  "pad_token_id": 1,
+  "prefix": "</s>",
+  "torch_dtype": "float16",
+  "transformers_version": "4.45.0",
+  "use_cache": true,
+  "vocab_size": 50272,
+  "word_embed_proj_dim": 768
+}
+
+[INFO|configuration_utils.py:672] 2025-11-13 14:24:21,848 >> loading configuration file config.json from cache at /home/hyeondojang/.cache/huggingface/hub/models--facebook--opt-125m/snapshots/27dcfa74d334bc871f3234de431e71c6eeba5dd6/config.json
+[INFO|configuration_utils.py:739] 2025-11-13 14:24:21,849 >> Model config OPTConfig {
+  "_name_or_path": "facebook/opt-125m",
+  "_remove_final_layer_norm": false,
+  "activation_dropout": 0.0,
+  "activation_function": "relu",
+  "architectures": [
+    "OPTForCausalLM"
+  ],
+  "attention_dropout": 0.0,
+  "bos_token_id": 2,
+  "do_layer_norm_before": true,
+  "dropout": 0.1,
+  "enable_bias": true,
+  "eos_token_id": 2,
+  "ffn_dim": 3072,
+  "hidden_size": 768,
+  "init_std": 0.02,
+  "layer_norm_elementwise_affine": true,
+  "layerdrop": 0.0,
+  "max_position_embeddings": 2048,
+  "model_type": "opt",
+  "num_attention_heads": 12,
+  "num_hidden_layers": 12,
+  "pad_token_id": 1,
+  "prefix": "</s>",
+  "torch_dtype": "float16",
+  "transformers_version": "4.45.0",
+  "use_cache": true,
+  "vocab_size": 50272,
+  "word_embed_proj_dim": 768
+}
+
+[INFO|tokenization_utils_base.py:2214] 2025-11-13 14:24:21,869 >> loading file vocab.json from cache at /home/hyeondojang/.cache/huggingface/hub/models--facebook--opt-125m/snapshots/27dcfa74d334bc871f3234de431e71c6eeba5dd6/vocab.json
+[INFO|tokenization_utils_base.py:2214] 2025-11-13 14:24:21,869 >> loading file merges.txt from cache at /home/hyeondojang/.cache/huggingface/hub/models--facebook--opt-125m/snapshots/27dcfa74d334bc871f3234de431e71c6eeba5dd6/merges.txt
+[INFO|tokenization_utils_base.py:2214] 2025-11-13 14:24:21,869 >> loading file added_tokens.json from cache at None
+[INFO|tokenization_utils_base.py:2214] 2025-11-13 14:24:21,869 >> loading file special_tokens_map.json from cache at /home/hyeondojang/.cache/huggingface/hub/models--facebook--opt-125m/snapshots/27dcfa74d334bc871f3234de431e71c6eeba5dd6/special_tokens_map.json
+[INFO|tokenization_utils_base.py:2214] 2025-11-13 14:24:21,869 >> loading file tokenizer_config.json from cache at /home/hyeondojang/.cache/huggingface/hub/models--facebook--opt-125m/snapshots/27dcfa74d334bc871f3234de431e71c6eeba5dd6/tokenizer_config.json
+[INFO|tokenization_utils_base.py:2214] 2025-11-13 14:24:21,870 >> loading file tokenizer.json from cache at None
+[INFO|configuration_utils.py:672] 2025-11-13 14:24:21,872 >> loading configuration file config.json from cache at /home/hyeondojang/.cache/huggingface/hub/models--facebook--opt-125m/snapshots/27dcfa74d334bc871f3234de431e71c6eeba5dd6/config.json
+[INFO|configuration_utils.py:739] 2025-11-13 14:24:21,872 >> Model config OPTConfig {
+  "_name_or_path": "facebook/opt-125m",
+  "_remove_final_layer_norm": false,
+  "activation_dropout": 0.0,
+  "activation_function": "relu",
+  "architectures": [
+    "OPTForCausalLM"
+  ],
+  "attention_dropout": 0.0,
+  "bos_token_id": 2,
+  "do_layer_norm_before": true,
+  "dropout": 0.1,
+  "enable_bias": true,
+  "eos_token_id": 2,
+  "ffn_dim": 3072,
+  "hidden_size": 768,
+  "init_std": 0.02,
+  "layer_norm_elementwise_affine": true,
+  "layerdrop": 0.0,
+  "max_position_embeddings": 2048,
+  "model_type": "opt",
+  "num_attention_heads": 12,
+  "num_hidden_layers": 12,
+  "pad_token_id": 1,
+  "prefix": "</s>",
+  "torch_dtype": "float16",
+  "transformers_version": "4.45.0",
+  "use_cache": true,
+  "vocab_size": 50272,
+  "word_embed_proj_dim": 768
+}
+
+/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/transformers/tokenization_utils_base.py:1617: FutureWarning: `clean_up_tokenization_spaces` was not set. It will be set to `True` by default. This behavior will be deprecated in transformers v4.45, and will be then set to `False` by default. For more details check this issue: https://github.com/huggingface/transformers/issues/31884
+  warnings.warn(
+[INFO|configuration_utils.py:670] 2025-11-13 14:24:21,930 >> loading configuration file /home/hyeondojang/log_teams/opt-model/elsa_iclr26/save/Llama-2-7b-hf_wanda/0.5/config.json
+[INFO|configuration_utils.py:739] 2025-11-13 14:24:21,931 >> Model config LlamaConfig {
+  "_name_or_path": "/home/hyeondojang/log_teams/opt-model/elsa_iclr26/save/Llama-2-7b-hf_wanda/0.5",
+  "architectures": [
+    "LlamaForCausalLM"
+  ],
+  "attention_bias": false,
+  "attention_dropout": 0.0,
+  "bos_token_id": 1,
+  "eos_token_id": 2,
+  "head_dim": 128,
+  "hidden_act": "silu",
+  "hidden_size": 4096,
+  "initializer_range": 0.02,
+  "intermediate_size": 11008,
+  "max_position_embeddings": 4096,
+  "mlp_bias": false,
+  "model_type": "llama",
+  "num_attention_heads": 32,
+  "num_hidden_layers": 32,
+  "num_key_value_heads": 32,
+  "pretraining_tp": 1,
+  "rms_norm_eps": 1e-05,
+  "rope_scaling": null,
+  "rope_theta": 10000.0,
+  "tie_word_embeddings": false,
+  "torch_dtype": "float16",
+  "transformers_version": "4.45.0",
+  "use_cache": true,
+  "vocab_size": 32000
+}
+
+[INFO|modeling_utils.py:3723] 2025-11-13 14:24:21,936 >> loading weights file /home/hyeondojang/log_teams/opt-model/elsa_iclr26/save/Llama-2-7b-hf_wanda/0.5/model.safetensors.index.json
+[INFO|modeling_utils.py:1622] 2025-11-13 14:24:21,937 >> Instantiating LlamaForCausalLM model under default dtype torch.float16.
+[INFO|configuration_utils.py:1099] 2025-11-13 14:24:21,938 >> Generate config GenerationConfig {
+  "bos_token_id": 1,
+  "eos_token_id": 2
+}
+
+I1113 14:24:23.222144 22440741131264 modeling.py:991] We will use 90% of the memory on device 0 for storing the model, and 10% for the buffer to avoid OOM. You can set `max_memory` in to a higher value to use more memory (at your own risk).
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 3/3 [00:02<00:00,  1.07it/s]
+[INFO|modeling_utils.py:4568] 2025-11-13 14:24:26,082 >> All model checkpoint weights were used when initializing LlamaForCausalLM.
+
+[INFO|modeling_utils.py:4576] 2025-11-13 14:24:26,082 >> All the weights of LlamaForCausalLM were initialized from the model checkpoint at /home/hyeondojang/log_teams/opt-model/elsa_iclr26/save/Llama-2-7b-hf_wanda/0.5.
+If your task is similar to the task the model of the checkpoint was trained on, you can already use LlamaForCausalLM for predictions without further training.
+[INFO|configuration_utils.py:1052] 2025-11-13 14:24:26,089 >> loading configuration file /home/hyeondojang/log_teams/opt-model/elsa_iclr26/save/Llama-2-7b-hf_wanda/0.5/generation_config.json
+[INFO|configuration_utils.py:1099] 2025-11-13 14:24:26,089 >> Generate config GenerationConfig {
+  "bos_token_id": 1,
+  "do_sample": true,
+  "eos_token_id": 2,
+  "max_length": 4096,
+  "pad_token_id": 0,
+  "temperature": 0.6,
+  "top_p": 0.9
+}
+
+I1113 14:24:26.133630 22440741131264 data.py:137] No valid processed cache found. Generating dataset...
+I1113 14:24:26.133806 22440741131264 data.py:45] Loading C4 raw data from Hugging Face Hub.
+Using custom data configuration default-b04fc8a0b8562884
+I1113 14:24:31.963930 22440741131264 builder.py:610] Using custom data configuration default-b04fc8a0b8562884
+Loading Dataset Infos from /home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/datasets/packaged_modules/json
+I1113 14:24:31.964230 22440741131264 info.py:355] Loading Dataset Infos from /home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/datasets/packaged_modules/json
+Overwrite dataset info from restored data version if exists.
+I1113 14:24:31.970359 22440741131264 builder.py:394] Overwrite dataset info from restored data version if exists.
+Loading Dataset info from /home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-b04fc8a0b8562884/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2
+I1113 14:24:31.970638 22440741131264 info.py:274] Loading Dataset info from /home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-b04fc8a0b8562884/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2
+Found cached dataset c4 (/home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-b04fc8a0b8562884/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2)
+I1113 14:24:32.046271 22440741131264 builder.py:864] Found cached dataset c4 (/home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-b04fc8a0b8562884/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2)
+Loading Dataset info from /home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-b04fc8a0b8562884/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2
+I1113 14:24:32.046514 22440741131264 info.py:274] Loading Dataset info from /home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-b04fc8a0b8562884/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2
+Tokenizing C4: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 64/64 [00:05<00:00, 12.06it/s]
+Generating samples: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 64/64 [00:00<00:00, 10168.78it/s]
+I1113 14:24:37.413534 22440741131264 data.py:137] No valid processed cache found. Generating dataset...
+I1113 14:24:37.413783 22440741131264 data.py:45] Loading C4 raw data from Hugging Face Hub.
+Using custom data configuration default-c7bc8b0aefc5e48f
+I1113 14:24:38.972597 22440741131264 builder.py:610] Using custom data configuration default-c7bc8b0aefc5e48f
+Loading Dataset Infos from /home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/datasets/packaged_modules/json
+I1113 14:24:38.972854 22440741131264 info.py:355] Loading Dataset Infos from /home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/datasets/packaged_modules/json
+Overwrite dataset info from restored data version if exists.
+I1113 14:24:38.977869 22440741131264 builder.py:394] Overwrite dataset info from restored data version if exists.
+Loading Dataset info from /home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-c7bc8b0aefc5e48f/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2
+I1113 14:24:38.978107 22440741131264 info.py:274] Loading Dataset info from /home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-c7bc8b0aefc5e48f/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2
+Found cached dataset c4 (/home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-c7bc8b0aefc5e48f/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2)
+I1113 14:24:38.983150 22440741131264 builder.py:864] Found cached dataset c4 (/home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-c7bc8b0aefc5e48f/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2)
+Loading Dataset info from /home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-c7bc8b0aefc5e48f/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2
+I1113 14:24:38.983376 22440741131264 info.py:274] Loading Dataset info from /home/hyeondojang/.cache/huggingface/datasets/allenai___c4/default-c7bc8b0aefc5e48f/0.0.0/1588ec454efa1a09f29cd18ddd04fe05fc8653a2
+Tokenizing C4: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00<00:00, 42.67it/s]
+Generating samples: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00<00:00, 9388.48it/s]
+[INFO|modeling_utils.py:2155] 2025-11-13 14:24:39,173 >> You are resizing the embedding layer without providing a `pad_to_multiple_of` parameter. This means that the new embedding dimension will be 50265. This might induce some performance reduction as *Tensor Cores* will not be available. For more details about this, or help on choosing the correct value for resizing, refer to this guide: https://docs.nvidia.com/deeplearning/performance/dl-performance-matrix-multiplication/index.html#requirements-tc
+/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/transformers/utils/import_utils.py:601: FutureWarning: `is_torch_tpu_available` is deprecated and will be removed in 4.41.0. Please use the `is_torch_xla_available` instead.
+  warnings.warn(
+W1113 14:24:39.183180 22440741131264 other.py:441] Detected kernel version 4.18.0, which is below the recommended minimum of 5.5.0; this can cause the process to hang. It is recommended to upgrade the kernel to the minimum version or higher.
+[INFO|trainer.py:667] 2025-11-13 14:24:39,188 >> Using auto half precision backend
+[2025-11-13 14:24:40,387] [INFO] [real_accelerator.py:254:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+Warning: The cache directory for DeepSpeed Triton autotune, /home/hyeondojang/.triton/autotune, appears to be on an NFS system. While this is generally acceptable, if you experience slowdowns or hanging when DeepSpeed exits, it is recommended to set the TRITON_CACHE_DIR environment variable to a non-NFS path.
+I1113 14:24:40.664952 22440741131264 spawn.py:77] gcc -pthread -B /home/hyeondojang/.conda/envs/prune_gpa/compiler_compat -Wno-unused-result -Wsign-compare -DNDEBUG -fwrapv -O2 -Wall -fPIC -O2 -isystem /home/hyeondojang/.conda/envs/prune_gpa/include -fPIC -O2 -isystem /home/hyeondojang/.conda/envs/prune_gpa/include -fPIC -c /tmp/tmpp_uiaf5z/test.c -o /tmp/tmpp_uiaf5z/test.o
+I1113 14:24:40.679049 22440741131264 spawn.py:77] gcc -pthread -B /home/hyeondojang/.conda/envs/prune_gpa/compiler_compat /tmp/tmpp_uiaf5z/test.o -laio -o /tmp/tmpp_uiaf5z/a.out
+I1113 14:24:40.697012 22440741131264 spawn.py:77] gcc -pthread -B /home/hyeondojang/.conda/envs/prune_gpa/compiler_compat -Wno-unused-result -Wsign-compare -DNDEBUG -fwrapv -O2 -Wall -fPIC -O2 -isystem /home/hyeondojang/.conda/envs/prune_gpa/include -fPIC -O2 -isystem /home/hyeondojang/.conda/envs/prune_gpa/include -fPIC -c /tmp/tmpjmitfp2_/test.c -o /tmp/tmpjmitfp2_/test.o
+I1113 14:24:40.709269 22440741131264 spawn.py:77] gcc -pthread -B /home/hyeondojang/.conda/envs/prune_gpa/compiler_compat /tmp/tmpjmitfp2_/test.o -L/usr/local/cuda -L/usr/local/cuda/lib64 -lcufile -o /tmp/tmpjmitfp2_/a.out
+[2025-11-13 14:24:41,370] [INFO] [logging.py:107:log_dist] [Rank -1] [TorchCheckpointEngine] Initialized with serialization = False
+[INFO|trainer.py:2243] 2025-11-13 14:24:41,400 >> ***** Running training *****
+[INFO|trainer.py:2244] 2025-11-13 14:24:41,400 >>   Num examples = 64
+[INFO|trainer.py:2245] 2025-11-13 14:24:41,400 >>   Num Epochs = 1
+[INFO|trainer.py:2246] 2025-11-13 14:24:41,400 >>   Instantaneous batch size per device = 8
+[INFO|trainer.py:2249] 2025-11-13 14:24:41,400 >>   Total train batch size (w. parallel, distributed & accumulation) = 8
+[INFO|trainer.py:2250] 2025-11-13 14:24:41,400 >>   Gradient Accumulation steps = 1
+[INFO|trainer.py:2251] 2025-11-13 14:24:41,400 >>   Total optimization steps = 8
+[INFO|trainer.py:2252] 2025-11-13 14:24:41,402 >>   Number of trainable parameters = 4,194,304
+ 12%|████████████████████████▋                                                                                                                                                                            | 1/8 [00:05<00:40,  5.74s/it][INFO|trainer.py:4021] 2025-11-13 14:24:47,151 >>
+{'loss': 15.8252, 'grad_norm': nan, 'learning_rate': 0.0001, 'epoch': 0.12}
+***** Running Evaluation *****
+[INFO|trainer.py:4023] 2025-11-13 14:24:47,151 >>   Num examples = 4
+[INFO|trainer.py:4026] 2025-11-13 14:24:47,152 >>   Batch size = 1
+ 25%|█████████████████████████████████████████████████▎                                                                                                                                                   | 2/8 [00:12<00:39,  6.52s/it][INFO|trainer.py:4021] 2025-11-13 14:24:54,215 >>
+***** Running Evaluation *****                                                                                                                                                                                                          
+{'eval_loss': 15.277277946472168, 'eval_perplexity': 4313580.674625326, 'eval_runtime': 2.2248, 'eval_samples_per_second': 1.798, 'eval_steps_per_second': 1.798, 'epoch': 0.12}
+{'loss': 15.9086, 'grad_norm': nan, 'learning_rate': 0.0001, 'epoch': 0.25}
+[INFO|trainer.py:4023] 2025-11-13 14:24:54,215 >>   Num examples = 4
+[INFO|trainer.py:4026] 2025-11-13 14:24:54,215 >>   Batch size = 1
+ 38%|█████████████████████████████████████████████████████████████████████████▉                                                                                                                           | 3/8 [00:19<00:33,  6.77s/it][INFO|trainer.py:4021] 2025-11-13 14:25:01,293 >>
+***** Running Evaluation *****                                                                                                                                                                                                          
+{'eval_loss': 15.277277946472168, 'eval_perplexity': 4313580.674625326, 'eval_runtime': 2.2217, 'eval_samples_per_second': 1.8, 'eval_steps_per_second': 1.8, 'epoch': 0.25}
+{'loss': 15.5024, 'grad_norm': 13.407548904418945, 'learning_rate': 8.75e-05, 'epoch': 0.38}
+[INFO|trainer.py:4023] 2025-11-13 14:25:01,294 >>   Num examples = 4
+[INFO|trainer.py:4026] 2025-11-13 14:25:01,294 >>   Batch size = 1
+ 50%|██████████████████████████████████████████████████████████████████████████████████████████████████▌                                                                                                  | 4/8 [00:26<00:27,  6.90s/it][INFO|trainer.py:4021] 2025-11-13 14:25:08,386 >>
+***** Running Evaluation *****                                                                                                                                                                                                          
+{'eval_loss': 14.818358421325684, 'eval_perplexity': 2726028.957738781, 'eval_runtime': 2.2201, 'eval_samples_per_second': 1.802, 'eval_steps_per_second': 1.802, 'epoch': 0.38}
+{'loss': 15.585, 'grad_norm': nan, 'learning_rate': 8.75e-05, 'epoch': 0.5}
+[INFO|trainer.py:4023] 2025-11-13 14:25:08,386 >>   Num examples = 4
+[INFO|trainer.py:4026] 2025-11-13 14:25:08,386 >>   Batch size = 1
+ 62%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████▏                                                                         | 5/8 [00:34<00:20,  6.97s/it][INFO|trainer.py:4021] 2025-11-13 14:25:15,489 >>
+***** Running Evaluation *****                                                                                                                                                                                                          
+{'eval_loss': 14.818358421325684, 'eval_perplexity': 2726028.957738781, 'eval_runtime': 2.228, 'eval_samples_per_second': 1.795, 'eval_steps_per_second': 1.795, 'epoch': 0.5}
+{'loss': 15.7288, 'grad_norm': nan, 'learning_rate': 8.75e-05, 'epoch': 0.62}
+[INFO|trainer.py:4023] 2025-11-13 14:25:15,489 >>   Num examples = 4
+[INFO|trainer.py:4026] 2025-11-13 14:25:15,489 >>   Batch size = 1
+ 75%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████▊                                                 | 6/8 [00:41<00:14,  7.02s/it][INFO|trainer.py:4021] 2025-11-13 14:25:22,611 >>
+***** Running Evaluation *****                                                                                                                                                                                                          
+{'eval_loss': 14.818358421325684, 'eval_perplexity': 2726028.957738781, 'eval_runtime': 2.2327, 'eval_samples_per_second': 1.792, 'eval_steps_per_second': 1.792, 'epoch': 0.62}
+{'loss': 15.0897, 'grad_norm': nan, 'learning_rate': 8.75e-05, 'epoch': 0.75}
+[INFO|trainer.py:4023] 2025-11-13 14:25:22,611 >>   Num examples = 4
+[INFO|trainer.py:4026] 2025-11-13 14:25:22,611 >>   Batch size = 1
+ 88%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████▍                        | 7/8 [00:48<00:07,  7.06s/it][INFO|trainer.py:4021] 2025-11-13 14:25:29,737 >>
+***** Running Evaluation *****                                                                                                                                                                                                          
+{'eval_loss': 14.818358421325684, 'eval_perplexity': 2726028.957738781, 'eval_runtime': 2.2297, 'eval_samples_per_second': 1.794, 'eval_steps_per_second': 1.794, 'epoch': 0.75}
+{'loss': 14.667, 'grad_norm': nan, 'learning_rate': 8.75e-05, 'epoch': 0.88}
+[INFO|trainer.py:4023] 2025-11-13 14:25:29,737 >>   Num examples = 4
+[INFO|trainer.py:4026] 2025-11-13 14:25:29,738 >>   Batch size = 1
+100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 8/8 [00:55<00:00,  7.07s/it][INFO|trainer.py:4021] 2025-11-13 14:25:36,838 >>
+***** Running Evaluation *****                                                                                                                                                                                                          
+{'eval_loss': 14.818358421325684, 'eval_perplexity': 2726028.957738781, 'eval_runtime': 2.2285, 'eval_samples_per_second': 1.795, 'eval_steps_per_second': 1.795, 'epoch': 0.88}
+{'loss': 15.437, 'grad_norm': nan, 'learning_rate': 8.75e-05, 'epoch': 1.0}
+[INFO|trainer.py:4023] 2025-11-13 14:25:36,838 >>   Num examples = 4
+[INFO|trainer.py:4026] 2025-11-13 14:25:36,838 >>   Batch size = 1
+100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 8/8 [00:57<00:00,  7.07s/it][INFO|trainer.py:2505] 2025-11-13 14:25:39,069 >>
+                                                                                                                                                                                                                                        
+{'eval_loss': 14.818358421325684, 'eval_perplexity': 2726028.957738781, 'eval_runtime': 2.2291, 'eval_samples_per_second': 1.794, 'eval_steps_per_second': 1.794, 'epoch': 1.0}
+Training completed. Do not forget to share your model on huggingface.co/models =)
+
+
+100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 8/8 [00:57<00:00,  7.21s/it]
+{'train_runtime': 57.6674, 'train_samples_per_second': 1.11, 'train_steps_per_second': 0.139, 'train_loss': 15.46796441078186, 'epoch': 1.0}
+***** train metrics *****
+  epoch                    =        1.0
+  total_flos               =  4897230GF
+  train_loss               =     15.468
+  train_runtime            = 0:00:57.66
+  train_samples            =         64
+  train_samples_per_second =       1.11
+  train_steps_per_second   =      0.139
+I1113 14:25:39.077571 22440741131264 finetune_lm.py:736] *** Evaluate ***
+[INFO|trainer.py:4021] 2025-11-13 14:25:39,082 >>
+***** Running Evaluation *****
+[INFO|trainer.py:4023] 2025-11-13 14:25:39,082 >>   Num examples = 4
+[INFO|trainer.py:4026] 2025-11-13 14:25:39,082 >>   Batch size = 1
+100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:01<00:00,  2.00it/s]
+***** eval metrics *****
+  epoch                   =          1.0
+  eval_loss               =      14.8184
+  eval_perplexity         = 2726028.9577
+  eval_runtime            =   0:00:02.22
+  eval_samples            =            4
+  eval_samples_per_second =        1.796
+  eval_steps_per_second   =        1.796
+  perplexity              = 2726034.1572
+[INFO|modelcard.py:449] 2025-11-13 14:25:41,317 >> Dropping the following result as it does not have all the necessary fields:
+{'task': {'name': 'Causal Language Modeling', 'type': 'text-generation'}, 'dataset': {'name': 'c4', 'type': 'c4', 'config': None, 'split': 'None'}}
+I1113 14:25:41.319744 22440741131264 finetune_lm.py:768] ============================================================
+I1113 14:25:41.319905 22440741131264 finetune_lm.py:769] Starting post-training evaluation (PPL and Zero-shot)
+I1113 14:25:41.319980 22440741131264 finetune_lm.py:770] ============================================================
+I1113 14:25:41.320199 22440741131264 finetune_lm.py:782] Set model.seqlen = 2048
+I1113 14:25:41.320317 22440741131264 finetune_lm.py:796] --- Evaluating Perplexity (PPL) ---
+I1113 14:25:41.320416 22440741131264 eval.py:33] evaluating on wikitext2
+I1113 14:25:41.320495 22440741131264 data.py:193] Using `get_loaders` (legacy compatibility mode).
+I1113 14:25:41.320624 22440741131264 data.py:137] No valid processed cache found. Generating dataset...
+Traceback (most recent call last):
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/utils/_http.py", line 409, in hf_raise_for_status
+    response.raise_for_status()
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/requests/models.py", line 1024, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 404 Client Error: Not Found for url: https://huggingface.co/datasets/Salesforce/wikitext/resolve/b08601e04326c79dfdd32d625aee71d232d685c3/wikitext.py
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/datasets/load.py", line 1580, in dataset_module_factory
+    dataset_script_path = api.hf_hub_download(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/hf_api.py", line 5483, in hf_hub_download
+    return hf_hub_download(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1008, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1071, in _hf_hub_download_to_cache_dir
+    (url_to_download, etag, commit_hash, expected_size, xet_file_data, head_call_error) = _get_metadata_or_catch_error(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1531, in _get_metadata_or_catch_error
+    metadata = get_hf_file_metadata(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1448, in get_hf_file_metadata
+    r = _request_wrapper(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 305, in _request_wrapper
+    return _request_wrapper(method=method, url=next_url, follow_relative_redirects=True, **params)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 286, in _request_wrapper
+    response = _request_wrapper(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 310, in _request_wrapper
+    hf_raise_for_status(response)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/utils/_http.py", line 420, in hf_raise_for_status
+    raise _format(EntryNotFoundError, message, response) from e
+huggingface_hub.errors.EntryNotFoundError: 404 Client Error. (Request ID: Root=1-69156bd6-02f6b19e267813a36eac73bd;dd64c1a9-beee-438a-b104-05c504df3597)
+
+Entry Not Found for url: https://huggingface.co/datasets/Salesforce/wikitext/resolve/b08601e04326c79dfdd32d625aee71d232d685c3/wikitext.py.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/hyeondojang/log_teams/opt-model/elsa_iclr26/lib/finetune_lm.py", line 894, in <module>
+    app.run(main)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/absl/app.py", line 316, in run
+    _run_main(main, args)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/absl/app.py", line 261, in _run_main
+    sys.exit(main(argv))
+  File "/home/hyeondojang/log_teams/opt-model/elsa_iclr26/lib/finetune_lm.py", line 798, in main
+    ppl_test = eval_ppl(eval_args, model, tokenizer, device, data_path=eval_args.data_path)
+  File "/home/hyeondojang/log_teams/opt-model/elsa_iclr26/lib/eval.py", line 36, in eval_ppl
+    _, testloader = get_loaders(
+  File "/home/hyeondojang/log_teams/opt-model/elsa_iclr26/lib/data.py", line 196, in get_loaders
+    train_dataset = get_dataset(
+  File "/home/hyeondojang/log_teams/opt-model/elsa_iclr26/lib/data.py", line 138, in get_dataset
+    raw_dataset = _get_raw_dataset(dataset_name, data_type, data_path=data_path)
+  File "/home/hyeondojang/log_teams/opt-model/elsa_iclr26/lib/data.py", line 57, in _get_raw_dataset
+    return load_dataset('wikitext', 'wikitext-2-raw-v1', split=split_name, trust_remote_code=True)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/datasets/load.py", line 2062, in load_dataset
+    builder_instance = load_dataset_builder(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/datasets/load.py", line 1782, in load_dataset_builder
+    dataset_module = dataset_module_factory(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/datasets/load.py", line 1629, in dataset_module_factory
+    ).get_module()
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/datasets/load.py", line 978, in get_module
+    standalone_yaml_path = cached_path(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/datasets/utils/file_utils.py", line 191, in cached_path
+    output_path = huggingface_hub.HfApi(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/hf_api.py", line 5483, in hf_hub_download
+    return hf_hub_download(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1008, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1071, in _hf_hub_download_to_cache_dir
+    (url_to_download, etag, commit_hash, expected_size, xet_file_data, head_call_error) = _get_metadata_or_catch_error(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1531, in _get_metadata_or_catch_error
+    metadata = get_hf_file_metadata(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1448, in get_hf_file_metadata
+    r = _request_wrapper(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 286, in _request_wrapper
+    response = _request_wrapper(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 309, in _request_wrapper
+    response = http_backoff(method=method, url=url, **params, retry_on_exceptions=(), retry_on_status_codes=(429,))
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/utils/_http.py", line 310, in http_backoff
+    response = session.request(method=method, url=url, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/requests/sessions.py", line 589, in request
+    resp = self.send(prep, **send_kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/requests/sessions.py", line 703, in send
+    r = adapter.send(request, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/huggingface_hub/utils/_http.py", line 96, in send
+    return super().send(request, *args, **kwargs)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/requests/adapters.py", line 667, in send
+    resp = conn.urlopen(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/urllib3/connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/urllib3/connectionpool.py", line 534, in _make_request
+    response = conn.getresponse()
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/site-packages/urllib3/connection.py", line 516, in getresponse
+    httplib_response = super().getresponse()
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/http/client.py", line 1375, in getresponse
+    response.begin()
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/http/client.py", line 318, in begin
+    version, status, reason = self._read_status()
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/http/client.py", line 279, in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/socket.py", line 717, in readinto
+    return self._sock.recv_into(b)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/ssl.py", line 1307, in recv_into
+    return self.read(nbytes, buffer)
+  File "/home/hyeondojang/.conda/envs/prune_gpa/lib/python3.10/ssl.py", line 1163, in read
+    return self._sslobj.read(len, buffer)
+KeyboardInterrupt

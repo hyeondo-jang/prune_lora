@@ -420,6 +420,17 @@ def prepare_calibration_input(
 
     # Move necessary components to the specified device
     embed_tokens.to(device)
+    
+    # Handle OPT model's embed_positions (positional embeddings)
+    # OPT models have embed_positions in decoder, which needs to be on the same device
+    if hasattr(model, 'model') and hasattr(model.model, 'decoder'):
+        decoder = model.model.decoder
+        if hasattr(decoder, 'embed_positions'):
+            decoder.embed_positions.to(device)
+    elif hasattr(model, 'decoder'):
+        if hasattr(model.decoder, 'embed_positions'):
+            model.decoder.embed_positions.to(device)
+    
     if norm is not None:
         norm.to(device)
     if rotary_emb is not None:

@@ -1,0 +1,15 @@
+{"time":"2025-11-13T13:45:10.421914894+09:00","level":"INFO","msg":"stream: starting","core version":"0.19.11","symlink path":"/home/hyeondojang/log_teams/opt-model/elsa_iclr26/lib/wandb/run-20251113_134510-qnfs8bpk/logs/debug-core.log"}
+{"time":"2025-11-13T13:45:10.758971264+09:00","level":"INFO","msg":"created new stream","id":"qnfs8bpk"}
+{"time":"2025-11-13T13:45:10.758985924+09:00","level":"INFO","msg":"stream: started","id":"qnfs8bpk"}
+{"time":"2025-11-13T13:45:10.759578478+09:00","level":"INFO","msg":"handler: started","stream_id":"qnfs8bpk"}
+{"time":"2025-11-13T13:45:10.759596839+09:00","level":"INFO","msg":"writer: Do: started","stream_id":"qnfs8bpk"}
+{"time":"2025-11-13T13:45:10.75969658+09:00","level":"INFO","msg":"sender: started","stream_id":"qnfs8bpk"}
+{"time":"2025-11-13T13:45:11.057930933+09:00","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-11-13T13:48:54.5085549+09:00","level":"INFO","msg":"stream: closing","id":"qnfs8bpk"}
+{"time":"2025-11-13T13:48:54.508655768+09:00","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-11-13T13:48:54.508965096+09:00","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-11-13T13:48:55.323237733+09:00","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-11-13T13:48:55.8192547+09:00","level":"INFO","msg":"handler: closed","stream_id":"qnfs8bpk"}
+{"time":"2025-11-13T13:48:55.81927237+09:00","level":"INFO","msg":"writer: Close: closed","stream_id":"qnfs8bpk"}
+{"time":"2025-11-13T13:48:55.819383964+09:00","level":"INFO","msg":"sender: closed","stream_id":"qnfs8bpk"}
+{"time":"2025-11-13T13:48:55.820359569+09:00","level":"INFO","msg":"stream: closed","id":"qnfs8bpk"}

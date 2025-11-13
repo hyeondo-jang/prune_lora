@@ -1,0 +1,15 @@
+{"time":"2025-11-13T13:25:21.396090332+09:00","level":"INFO","msg":"stream: starting","core version":"0.19.11","symlink path":"/home/hyeondojang/log_teams/opt-model/elsa_iclr26/lib/wandb/run-20251113_132521-0n9pt2jv/logs/debug-core.log"}
+{"time":"2025-11-13T13:25:21.740209739+09:00","level":"INFO","msg":"created new stream","id":"0n9pt2jv"}
+{"time":"2025-11-13T13:25:21.740223067+09:00","level":"INFO","msg":"stream: started","id":"0n9pt2jv"}
+{"time":"2025-11-13T13:25:21.740806958+09:00","level":"INFO","msg":"handler: started","stream_id":"0n9pt2jv"}
+{"time":"2025-11-13T13:25:21.740824573+09:00","level":"INFO","msg":"writer: Do: started","stream_id":"0n9pt2jv"}
+{"time":"2025-11-13T13:25:21.740923442+09:00","level":"INFO","msg":"sender: started","stream_id":"0n9pt2jv"}
+{"time":"2025-11-13T13:25:22.067934542+09:00","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-11-13T13:26:59.746886025+09:00","level":"INFO","msg":"stream: closing","id":"0n9pt2jv"}
+{"time":"2025-11-13T13:26:59.746988806+09:00","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-11-13T13:26:59.747377082+09:00","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-11-13T13:27:00.52168438+09:00","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-11-13T13:27:01.026355379+09:00","level":"INFO","msg":"handler: closed","stream_id":"0n9pt2jv"}
+{"time":"2025-11-13T13:27:01.026366569+09:00","level":"INFO","msg":"writer: Close: closed","stream_id":"0n9pt2jv"}
+{"time":"2025-11-13T13:27:01.026482516+09:00","level":"INFO","msg":"sender: closed","stream_id":"0n9pt2jv"}
+{"time":"2025-11-13T13:27:01.02747627+09:00","level":"INFO","msg":"stream: closed","id":"0n9pt2jv"}

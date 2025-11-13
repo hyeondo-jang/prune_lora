@@ -1,0 +1,68 @@
+_wandb:
+    value:
+        cli_version: 0.19.11
+        m: []
+        python_version: 3.10.18
+        t:
+            "1":
+                - 1
+                - 5
+                - 11
+                - 41
+                - 49
+                - 51
+                - 53
+                - 55
+                - 71
+                - 98
+                - 100
+            "2":
+                - 1
+                - 5
+                - 11
+                - 41
+                - 49
+                - 51
+                - 53
+                - 55
+                - 71
+                - 98
+                - 100
+            "3":
+                - 23
+                - 55
+            "4": 3.10.18
+            "5": 0.19.11
+            "6": 4.45.0
+            "8":
+                - 5
+            "12": 0.19.11
+            "13": linux-x86_64
+batch_size:
+    value: 32
+config_name:
+    value: facebook/opt-125m
+dataset_name:
+    value: c4
+learning_rate:
+    value: 0.0001
+lora_alpha:
+    value: 16
+lora_dropout:
+    value: 0.05
+lora_r:
+    value: 8
+lr_scheduler_type:
+    value: linear
+model_name_or_path:
+    value: /home/hyeondojang/log_teams/opt-model/elsa_iclr26/save/opt-125m_wanda/0.6
+num_train_epochs:
+    value: 1
+per_device_eval_batch_size:
+    value: 8
+per_device_train_batch_size:
+    value: 8
+seed:
+    value: 0
+steps:
+    value: 64

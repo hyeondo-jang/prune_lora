@@ -1,0 +1,15 @@
+{"time":"2025-11-13T13:57:53.35241833+09:00","level":"INFO","msg":"stream: starting","core version":"0.19.11","symlink path":"/home/hyeondojang/log_teams/opt-model/elsa_iclr26/lib/wandb/run-20251113_135753-cpuxj1k4/logs/debug-core.log"}
+{"time":"2025-11-13T13:57:53.741029854+09:00","level":"INFO","msg":"created new stream","id":"cpuxj1k4"}
+{"time":"2025-11-13T13:57:53.741043233+09:00","level":"INFO","msg":"stream: started","id":"cpuxj1k4"}
+{"time":"2025-11-13T13:57:53.741640737+09:00","level":"INFO","msg":"handler: started","stream_id":"cpuxj1k4"}
+{"time":"2025-11-13T13:57:53.741658631+09:00","level":"INFO","msg":"writer: Do: started","stream_id":"cpuxj1k4"}
+{"time":"2025-11-13T13:57:53.741760118+09:00","level":"INFO","msg":"sender: started","stream_id":"cpuxj1k4"}
+{"time":"2025-11-13T13:57:54.131756933+09:00","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-11-13T13:58:54.83003325+09:00","level":"INFO","msg":"stream: closing","id":"cpuxj1k4"}
+{"time":"2025-11-13T13:58:54.830093607+09:00","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-11-13T13:58:54.83050294+09:00","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-11-13T13:58:55.872343904+09:00","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-11-13T13:58:56.194448041+09:00","level":"INFO","msg":"handler: closed","stream_id":"cpuxj1k4"}
+{"time":"2025-11-13T13:58:56.194466695+09:00","level":"INFO","msg":"writer: Close: closed","stream_id":"cpuxj1k4"}
+{"time":"2025-11-13T13:58:56.194584318+09:00","level":"INFO","msg":"sender: closed","stream_id":"cpuxj1k4"}
+{"time":"2025-11-13T13:58:56.195354765+09:00","level":"INFO","msg":"stream: closed","id":"cpuxj1k4"}
