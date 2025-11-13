@@ -5,7 +5,5 @@ __pycache__/
 *.pyd
 /out/*
 /wandb/*
-dataset/
-/admm_*/*
-/memory/
-/plot_results/
+/save/*
+*.sh
