@@ -841,9 +841,27 @@ class ADMMTrainer(Trainer):
                 metric_key_prefix=f"{metric_key_prefix}_sparse",
             )
         
-        # Step 3: Merge metrics from sparse evaluation
+        # Step 3: Merge metrics from sparse evaluation and explicitly log sparse loss
         if sparse_output is not None:
             dense_output.metrics.update(sparse_output.metrics)
+            # Explicitly log sparse loss for clarity
+            if hasattr(sparse_output, 'metrics') and sparse_output.metrics:
+                # Extract loss from sparse metrics
+                # sparse evaluation uses metric_key_prefix="eval_sparse", so loss is stored as "eval_sparse_loss"
+                sparse_loss_key = f"{metric_key_prefix}_sparse_loss"
+                if sparse_loss_key not in sparse_output.metrics:
+                    # Fallback: try to find any loss key in sparse metrics
+                    for key in sparse_output.metrics.keys():
+                        if 'loss' in key.lower():
+                            sparse_loss_key = key
+                            break
+                
+                if sparse_loss_key in sparse_output.metrics:
+                    sparse_loss = sparse_output.metrics[sparse_loss_key]
+                    # Add explicit sparse loss metric
+                    dense_output.metrics[f"{metric_key_prefix}_sparse_loss"] = sparse_loss
+                    if self.is_world_process_zero():
+                        logger.info(f"Sparse loss: {sparse_loss:.4f}")
         
         return dense_output
 
